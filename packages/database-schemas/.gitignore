@@ -1,0 +1,28 @@
+# Prisma
+node_modules
+.env
+.env.local
+.env.*.local
+
+# Prisma generated files
+/node_modules/.prisma
+
+# Build output
+dist
+*.tsbuildinfo
+
+# IDE
+.vscode
+.idea
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*

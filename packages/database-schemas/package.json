@@ -1,29 +1,37 @@
 {
   "name": "@airline-ops/database-schemas",
   "version": "1.0.0",
-  "main": "./dist/index.js",
-  "types": "./dist/index.d.ts",
+  "description": "Centralized Prisma database schemas for airline PSS platform",
+  "main": "src/index.ts",
   "scripts": {
-    "build": "prisma generate && tsc",
-    "clean": "rm -rf dist",
-    "dev": "tsc --watch",
-    "typecheck": "tsc --noEmit",
+    "db:generate": "prisma generate",
+    "db:push": "prisma db push",
     "db:migrate": "prisma migrate dev",
     "db:migrate:deploy": "prisma migrate deploy",
-    "db:seed": "tsx prisma/seed.ts",
+    "db:migrate:reset": "prisma migrate reset",
     "db:studio": "prisma studio",
-    "db:push": "prisma db push",
-    "db:generate": "prisma generate"
+    "db:seed": "ts-node prisma/seed.ts",
+    "db:format": "prisma format"
   },
+  "prisma": {
+    "seed": "ts-node prisma/seed.ts"
+  },
+  "keywords": [
+    "airline",
+    "pss",
+    "database",
+    "prisma",
+    "schema"
+  ],
+  "author": "Airline Operations Team",
+  "license": "UNLICENSED",
   "dependencies": {
-    "@prisma/client": "^5.8.1",
-    "bcryptjs": "^2.4.3"
+    "@prisma/client": "^5.8.1"
   },
   "devDependencies": {
-    "@types/bcryptjs": "^2.4.6",
-    "@types/node": "^20.11.0",
     "prisma": "^5.8.1",
-    "tsx": "^4.7.0",
-    "typescript": "^5.3.3"
+    "typescript": "^5.3.3",
+    "ts-node": "^10.9.2",
+    "@types/node": "^20.11.5"
   }
 }
