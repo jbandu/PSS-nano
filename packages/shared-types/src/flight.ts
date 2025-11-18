@@ -1,4 +1,4 @@
-import { UUID, ISODateTime, Status } from './common';
+import { UUID, ISODateTime } from './common';
 
 export enum FlightStatus {
   SCHEDULED = 'SCHEDULED',
