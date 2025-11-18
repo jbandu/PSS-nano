@@ -17,8 +17,8 @@
     "db:seed": "tsx prisma/seed.ts"
   },
   "dependencies": {
-    "@airline-ops/database-schemas": "workspace:*",
-    "@airline-ops/shared-types": "workspace:*",
+    "@airline-ops/database-schemas": "*",
+    "@airline-ops/shared-types": "*",
     "@prisma/client": "^5.8.1",
     "axios": "^1.6.5",
     "compression": "^1.7.4",
