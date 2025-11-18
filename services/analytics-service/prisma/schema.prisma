@@ -1,0 +1,762 @@
+// Analytics Service - Data Warehouse Star Schema
+// Optimized for OLAP queries and business intelligence
+
+generator client {
+  provider = "prisma-client-js"
+  output   = "../node_modules/.prisma/client"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ============================================================================
+// DIMENSION TABLES
+// ============================================================================
+
+// Date Dimension - Complete calendar with business logic
+model DateDim {
+  dateKey               Int                   @id // YYYYMMDD format
+  date                  DateTime              @unique
+  
+  // Date components
+  year                  Int
+  quarter               Int                   // 1-4
+  month                 Int                   // 1-12
+  monthName             String                // January, February, etc.
+  monthNameShort        String                // Jan, Feb, etc.
+  week                  Int                   // Week of year 1-53
+  dayOfYear             Int                   // 1-366
+  dayOfMonth            Int                   // 1-31
+  dayOfWeek             Int                   // 1-7 (Monday = 1)
+  dayName               String                // Monday, Tuesday, etc.
+  dayNameShort          String                // Mon, Tue, etc.
+  
+  // Business attributes
+  isWeekday             Boolean
+  isWeekend             Boolean
+  isHoliday             Boolean
+  holidayName           String?
+  
+  // Fiscal attributes (can differ from calendar)
+  fiscalYear            Int
+  fiscalQuarter         Int
+  fiscalMonth           Int
+  fiscalWeek            Int
+  
+  // Season
+  season                String                // Spring, Summer, Fall, Winter
+  
+  // Relative dates
+  isToday               Boolean               @default(false)
+  isYesterday           Boolean               @default(false)
+  
+  // Relationships
+  bookingFacts          BookingFact[]         @relation("BookingDateDim")
+  departureFacts        BookingFact[]         @relation("DepartureDateDim")
+  revenueFacts          RevenueFact[]
+  operationalFacts      OperationalFact[]
+  ancillaryFacts        AncillaryFact[]
+  
+  @@index([year, month])
+  @@index([fiscalYear, fiscalQuarter])
+  @@index([isWeekday])
+  @@map("date_dim")
+}
+
+// Route Dimension - Origin-Destination pairs with geography
+model RouteDim {
+  routeKey              Int                   @id @default(autoincrement())
+  
+  // Route details
+  origin                String                // IATA code
+  destination           String                // IATA code
+  routeCode             String                @unique // "JFK-LAX"
+  
+  // Origin details
+  originCity            String
+  originCountry         String
+  originRegion          String                // North America, Europe, Asia, etc.
+  originTimezone        String
+  originLatitude        Float?
+  originLongitude       Float?
+  
+  // Destination details
+  destinationCity       String
+  destinationCountry    String
+  destinationRegion     String
+  destinationTimezone   String
+  destinationLatitude   Float?
+  destinationLongitude  Float?
+  
+  // Route characteristics
+  distance              Int                   // km
+  flightDuration        Int                   // minutes
+  isDomestic            Boolean
+  isInternational       Boolean
+  isTransContinental    Boolean
+  isTransAtlantic       Boolean
+  isTransPacific        Boolean
+  
+  // Market characteristics
+  marketType            String                // Leisure, Business, Mixed
+  competitionLevel      String                // High, Medium, Low
+  
+  // Effective dates (SCD Type 2)
+  effectiveFrom         DateTime              @default(now())
+  effectiveTo           DateTime?
+  isCurrent             Boolean               @default(true)
+  
+  // Relationships
+  bookingFacts          BookingFact[]
+  revenueFacts          RevenueFact[]
+  operationalFacts      OperationalFact[]
+  
+  @@index([origin, destination])
+  @@index([isCurrent])
+  @@index([routeCode])
+  @@map("route_dim")
+}
+
+// Customer Dimension - Passenger profiles with segmentation
+model CustomerDim {
+  customerKey           Int                   @id @default(autoincrement())
+  customerNaturalKey    String                @unique // PNR or passenger ID from source
+  
+  // Demographics
+  firstName             String?
+  lastName              String?
+  email                 String?
+  country               String?
+  city                  String?
+  
+  // Customer segmentation
+  customerSegment       String                // VIP, Frequent, Occasional, First-time
+  frequentFlyerTier     String?               // Platinum, Gold, Silver, None
+  frequentFlyerNumber   String?
+  
+  // Customer value
+  lifetimeBookings      Int                   @default(0)
+  lifetimeValue         Float                 @default(0) // Total revenue
+  averageBookingValue   Float                 @default(0)
+  
+  // Behavior
+  preferredCabin        String?               // Economy, Business, First
+  preferredChannel      String?               // Web, Mobile, Agent
+  averageAdvancePurchase Int?                 // Days before departure
+  
+  // RFM (Recency, Frequency, Monetary)
+  lastBookingDate       DateTime?
+  recencyScore          Int?                  // 1-5
+  frequencyScore        Int?                  // 1-5
+  monetaryScore         Int?                  // 1-5
+  rfmSegment            String?               // "Champions", "Loyal", "At Risk", etc.
+  
+  // Effective dates (SCD Type 2)
+  effectiveFrom         DateTime              @default(now())
+  effectiveTo           DateTime?
+  isCurrent             Boolean               @default(true)
+  
+  // Metadata
+  createdAt             DateTime              @default(now())
+  updatedAt             DateTime              @updatedAt
+  
+  // Relationships
+  bookingFacts          BookingFact[]
+  revenueFacts          RevenueFact[]
+  ancillaryFacts        AncillaryFact[]
+  
+  @@index([customerSegment])
+  @@index([frequentFlyerTier])
+  @@index([isCurrent])
+  @@index([email])
+  @@map("customer_dim")
+}
+
+// Product Dimension - Fare families and ancillary products
+model ProductDim {
+  productKey            Int                   @id @default(autoincrement())
+  productNaturalKey     String                @unique
+  
+  // Product identification
+  productType           ProductType
+  productCode           String
+  productName           String
+  productCategory       String
+  
+  // Fare family (if fare product)
+  fareFamily            String?               // Basic, Standard, Flexible, Premium
+  cabinClass            String?               // Economy, Business, First
+  bookingClass          String?               // Y, J, F, etc.
+  
+  // Product characteristics
+  isRefundable          Boolean               @default(false)
+  isChangeable          Boolean               @default(false)
+  includedBags          Int                   @default(0)
+  includedSeatSelection Boolean               @default(false)
+  priorityBoarding      Boolean               @default(false)
+  loungeAccess          Boolean               @default(false)
+  
+  // Pricing
+  basePrice             Float?
+  
+  // Effective dates (SCD Type 2)
+  effectiveFrom         DateTime              @default(now())
+  effectiveTo           DateTime?
+  isCurrent             Boolean               @default(true)
+  
+  // Relationships
+  bookingFacts          BookingFact[]
+  ancillaryFacts        AncillaryFact[]
+  
+  @@index([productType])
+  @@index([fareFamily])
+  @@index([isCurrent])
+  @@map("product_dim")
+}
+
+enum ProductType {
+  FARE
+  BAGGAGE
+  SEAT
+  MEAL
+  LOUNGE
+  PRIORITY
+  WIFI
+  INSURANCE
+  OTHER
+}
+
+// Channel Dimension - Booking channels and touchpoints
+model ChannelDim {
+  channelKey            Int                   @id @default(autoincrement())
+  
+  // Channel identification
+  channelCode           String                @unique
+  channelName           String
+  channelType           ChannelType
+  
+  // Channel attributes
+  isOnline              Boolean
+  isOffline             Boolean
+  isMobile              Boolean
+  isDesktop             Boolean
+  
+  // Distribution
+  distributionType      String                // Direct, GDS, OTA, Agent
+  
+  // Cost
+  distributionCost      Float?                // Commission or fee percentage
+  
+  // Effective dates
+  effectiveFrom         DateTime              @default(now())
+  effectiveTo           DateTime?
+  isCurrent             Boolean               @default(true)
+  
+  // Relationships
+  bookingFacts          BookingFact[]
+  revenueFacts          RevenueFact[]
+  ancillaryFacts        AncillaryFact[]
+  
+  @@index([channelType])
+  @@index([isCurrent])
+  @@map("channel_dim")
+}
+
+enum ChannelType {
+  WEB
+  MOBILE_APP
+  MOBILE_WEB
+  AGENT
+  CALL_CENTER
+  KIOSK
+  GDS
+  OTA
+  API
+}
+
+// Flight Dimension - Flight details
+model FlightDim {
+  flightKey             Int                   @id @default(autoincrement())
+  flightNaturalKey      String                @unique
+  
+  // Flight identification
+  flightNumber          String
+  operatingCarrier      String
+  marketingCarrier      String
+  
+  // Aircraft
+  aircraftType          String
+  aircraftVariant       String?
+  totalSeats            Int
+  
+  // Configuration
+  firstSeats            Int                   @default(0)
+  businessSeats         Int                   @default(0)
+  premiumEconomySeats   Int                   @default(0)
+  economySeats          Int
+  
+  // Effective dates
+  effectiveFrom         DateTime              @default(now())
+  effectiveTo           DateTime?
+  isCurrent             Boolean               @default(true)
+  
+  // Relationships
+  bookingFacts          BookingFact[]
+  operationalFacts      OperationalFact[]
+  
+  @@index([flightNumber])
+  @@index([aircraftType])
+  @@index([isCurrent])
+  @@map("flight_dim")
+}
+
+// Agent Dimension - Sales agents and agencies
+model AgentDim {
+  agentKey              Int                   @id @default(autoincrement())
+  agentNaturalKey       String                @unique
+  
+  // Agent details
+  agentId               String
+  agentName             String
+  agencyCode            String?
+  agencyName            String?
+  
+  // Agent type
+  agentType             String                // Travel agent, Corporate, Consolidator
+  
+  // Performance tier
+  performanceTier       String?               // Platinum, Gold, Silver, Bronze
+  
+  // Commission structure
+  commissionRate        Float?
+  
+  // Effective dates
+  effectiveFrom         DateTime              @default(now())
+  effectiveTo           DateTime?
+  isCurrent             Boolean               @default(true)
+  
+  // Relationships
+  bookingFacts          BookingFact[]
+  revenueFacts          RevenueFact[]
+  
+  @@index([agentId])
+  @@index([isCurrent])
+  @@map("agent_dim")
+}
+
+// ============================================================================
+// FACT TABLES
+// ============================================================================
+
+// Booking Fact - Core booking transaction fact table
+model BookingFact {
+  bookingKey            String                @id @default(uuid())
+  
+  // Foreign keys to dimensions
+  bookingDateKey        Int
+  departureDateKey      Int
+  routeKey              Int
+  customerKey           Int
+  productKey            Int
+  channelKey            Int
+  flightKey             Int
+  agentKey              Int?
+  
+  // Degenerate dimensions (attributes stored in fact)
+  pnrLocator            String
+  bookingReference      String
+  ticketNumber          String?
+  
+  // Measures - Counts
+  passengerCount        Int                   @default(1)
+  infantCount           Int                   @default(0)
+  segmentCount          Int                   @default(1)
+  
+  // Measures - Financial
+  baseFare              Float
+  taxes                 Float
+  fees                  Float
+  totalAmount           Float
+  amountPaid            Float                 @default(0)
+  
+  // Measures - Timing
+  advancePurchaseDays   Int                   // Days between booking and departure
+  bookingHour           Int                   // Hour of day (0-23)
+  
+  // Status flags
+  isCancelled           Boolean               @default(false)
+  isNoShow              Boolean               @default(false)
+  isUpgraded            Boolean               @default(false)
+  isGroupBooking        Boolean               @default(false)
+  
+  // Timestamps
+  bookingTimestamp      DateTime
+  cancellationTimestamp DateTime?
+  
+  // Metadata
+  createdAt             DateTime              @default(now())
+  
+  // Dimension relationships
+  bookingDate           DateDim               @relation("BookingDateDim", fields: [bookingDateKey], references: [dateKey])
+  departureDate         DateDim               @relation("DepartureDateDim", fields: [departureDateKey], references: [dateKey])
+  route                 RouteDim              @relation(fields: [routeKey], references: [routeKey])
+  customer              CustomerDim           @relation(fields: [customerKey], references: [customerKey])
+  product               ProductDim            @relation(fields: [productKey], references: [productKey])
+  channel               ChannelDim            @relation(fields: [channelKey], references: [channelKey])
+  flight                FlightDim             @relation(fields: [flightKey], references: [flightKey])
+  agent                 AgentDim?             @relation(fields: [agentKey], references: [agentKey])
+  
+  @@index([bookingDateKey, routeKey])
+  @@index([departureDateKey, routeKey])
+  @@index([customerKey])
+  @@index([channelKey])
+  @@index([pnrLocator])
+  @@index([bookingTimestamp])
+  @@map("booking_fact")
+}
+
+// Revenue Fact - Financial transactions fact table
+model RevenueFact {
+  revenueKey            String                @id @default(uuid())
+  
+  // Foreign keys
+  transactionDateKey    Int
+  routeKey              Int?
+  customerKey           Int?
+  channelKey            Int?
+  agentKey              Int?
+  
+  // Degenerate dimensions
+  transactionId         String                @unique
+  pnrLocator            String?
+  paymentMethod         String
+  
+  // Revenue measures
+  ticketRevenue         Float                 @default(0)
+  ancillaryRevenue      Float                 @default(0)
+  baggageRevenue        Float                 @default(0)
+  seatRevenue           Float                 @default(0)
+  otherRevenue          Float                 @default(0)
+  totalRevenue          Float
+  
+  // Cost measures
+  taxes                 Float                 @default(0)
+  fees                  Float                 @default(0)
+  commissions           Float                 @default(0)
+  distributionCost      Float                 @default(0)
+  
+  // Net revenue
+  netRevenue            Float
+  
+  // Transaction type
+  transactionType       RevenueTransactionType
+  
+  // Refund information
+  isRefund              Boolean               @default(false)
+  refundAmount          Float?
+  originalTransactionId String?
+  
+  // Currency
+  currency              String                @default("USD")
+  exchangeRate          Float                 @default(1.0)
+  
+  // Timestamps
+  transactionTimestamp  DateTime
+  
+  // Metadata
+  createdAt             DateTime              @default(now())
+  
+  // Relationships
+  transactionDate       DateDim               @relation(fields: [transactionDateKey], references: [dateKey])
+  route                 RouteDim?             @relation(fields: [routeKey], references: [routeKey])
+  customer              CustomerDim?          @relation(fields: [customerKey], references: [customerKey])
+  channel               ChannelDim?           @relation(fields: [channelKey], references: [channelKey])
+  agent                 AgentDim?             @relation(fields: [agentKey], references: [agentKey])
+  
+  @@index([transactionDateKey])
+  @@index([transactionType])
+  @@index([pnrLocator])
+  @@index([transactionTimestamp])
+  @@map("revenue_fact")
+}
+
+enum RevenueTransactionType {
+  BOOKING
+  PAYMENT
+  REFUND
+  EXCHANGE
+  ANCILLARY_PURCHASE
+  UPGRADE
+}
+
+// Operational Fact - Flight operations metrics
+model OperationalFact {
+  operationalKey        String                @id @default(uuid())
+  
+  // Foreign keys
+  operationDateKey      Int
+  routeKey              Int
+  flightKey             Int
+  
+  // Degenerate dimensions
+  flightNumber          String
+  tailNumber            String?
+  
+  // Capacity measures
+  totalSeats            Int
+  bookedSeats           Int
+  availableSeats        Int
+  loadFactor            Float                 // Percentage
+  
+  // Passenger measures
+  totalPassengers       Int
+  adultPassengers       Int
+  childPassengers       Int
+  infantPassengers      Int
+  
+  // Cabin breakdown
+  firstPassengers       Int                   @default(0)
+  businessPassengers    Int                   @default(0)
+  economyPassengers     Int
+  
+  // Check-in measures
+  webCheckIns           Int                   @default(0)
+  mobileCheckIns        Int                   @default(0)
+  kioskCheckIns         Int                   @default(0)
+  agentCheckIns         Int                   @default(0)
+  
+  // Baggage measures
+  checkedBags           Int                   @default(0)
+  totalBaggageWeight    Float                 @default(0)
+  
+  // Operational timing (minutes)
+  scheduledBlockTime    Int
+  actualBlockTime       Int?
+  delayMinutes          Int                   @default(0)
+  
+  // Status
+  flightStatus          FlightStatus
+  delayCode             String?
+  cancellationReason    String?
+  
+  // On-time performance
+  departedOnTime        Boolean               @default(false)
+  arrivedOnTime         Boolean               @default(false)
+  
+  // Timestamps
+  scheduledDeparture    DateTime
+  actualDeparture       DateTime?
+  scheduledArrival      DateTime
+  actualArrival         DateTime?
+  
+  // Metadata
+  createdAt             DateTime              @default(now())
+  
+  // Relationships
+  operationDate         DateDim               @relation(fields: [operationDateKey], references: [dateKey])
+  route                 RouteDim              @relation(fields: [routeKey], references: [routeKey])
+  flight                FlightDim             @relation(fields: [flightKey], references: [flightKey])
+  
+  @@index([operationDateKey, routeKey])
+  @@index([flightKey])
+  @@index([flightStatus])
+  @@map("operational_fact")
+}
+
+enum FlightStatus {
+  SCHEDULED
+  DEPARTED
+  ARRIVED
+  DELAYED
+  CANCELLED
+  DIVERTED
+}
+
+// Ancillary Fact - Ancillary product sales
+model AncillaryFact {
+  ancillaryKey          String                @id @default(uuid())
+  
+  // Foreign keys
+  saleDateKey           Int
+  customerKey           Int
+  productKey            Int
+  channelKey            Int
+  
+  // Degenerate dimensions
+  pnrLocator            String
+  transactionId         String
+  
+  // Measures
+  quantity              Int                   @default(1)
+  unitPrice             Float
+  totalPrice            Float
+  cost                  Float?
+  margin                Float?
+  
+  // Product details
+  productCategory       String
+  
+  // Purchase timing
+  purchasedAtBooking    Boolean               @default(false)
+  purchasedAtCheckIn    Boolean               @default(false)
+  purchasedPostBooking  Boolean               @default(false)
+  
+  // Timestamps
+  saleTimestamp         DateTime
+  
+  // Metadata
+  createdAt             DateTime              @default(now())
+  
+  // Relationships
+  saleDate              DateDim               @relation(fields: [saleDateKey], references: [dateKey])
+  customer              CustomerDim           @relation(fields: [customerKey], references: [customerKey])
+  product               ProductDim            @relation(fields: [productKey], references: [productKey])
+  channel               ChannelDim            @relation(fields: [channelKey], references: [channelKey])
+  
+  @@index([saleDateKey])
+  @@index([productCategory])
+  @@index([pnrLocator])
+  @@map("ancillary_fact")
+}
+
+// ============================================================================
+// AGGREGATED FACT TABLES (Materialized Views via tables)
+// ============================================================================
+
+// Daily Booking Summary
+model DailyBookingSummary {
+  id                    String                @id @default(uuid())
+  dateKey               Int
+  routeKey              Int?
+  channelKey            Int?
+  
+  // Aggregated measures
+  bookingCount          Int
+  passengerCount        Int
+  totalRevenue          Float
+  avgBookingValue       Float
+  avgAdvancePurchase    Float
+  
+  // Status counts
+  cancelledCount        Int                   @default(0)
+  noShowCount           Int                   @default(0)
+  
+  calculatedAt          DateTime              @default(now())
+  
+  @@unique([dateKey, routeKey, channelKey])
+  @@index([dateKey])
+  @@map("daily_booking_summary")
+}
+
+// Monthly Revenue by Route
+model MonthlyRevenueSummary {
+  id                    String                @id @default(uuid())
+  yearMonth             String                // "YYYY-MM"
+  routeKey              Int
+  
+  // Revenue measures
+  ticketRevenue         Float
+  ancillaryRevenue      Float
+  totalRevenue          Float
+  netRevenue            Float
+  
+  // Volume measures
+  bookingCount          Int
+  passengerCount        Int
+  
+  calculatedAt          DateTime              @default(now())
+  
+  @@unique([yearMonth, routeKey])
+  @@index([yearMonth])
+  @@map("monthly_revenue_summary")
+}
+
+// ============================================================================
+// ETL METADATA
+// ============================================================================
+
+model EtlJob {
+  id                    String                @id @default(uuid())
+  jobName               String
+  jobType               EtlJobType
+  sourceSystem          String
+  targetTable           String
+  
+  // Execution details
+  status                EtlJobStatus
+  startTime             DateTime?
+  endTime               DateTime?
+  duration              Int?                  // seconds
+  
+  // Data metrics
+  recordsExtracted      Int                   @default(0)
+  recordsTransformed    Int                   @default(0)
+  recordsLoaded         Int                   @default(0)
+  recordsFailed         Int                   @default(0)
+  
+  // Error handling
+  errorMessage          String?
+  errorDetails          String?               @db.Text
+  
+  // Schedule info
+  scheduledTime         DateTime
+  executionType         String                // Manual, Scheduled, Triggered
+  
+  createdAt             DateTime              @default(now())
+  
+  @@index([jobName, startTime])
+  @@index([status])
+  @@map("etl_jobs")
+}
+
+enum EtlJobType {
+  FULL_LOAD
+  INCREMENTAL
+  DIMENSION_UPDATE
+  FACT_LOAD
+  AGGREGATION
+}
+
+enum EtlJobStatus {
+  PENDING
+  RUNNING
+  SUCCESS
+  FAILED
+  PARTIAL_SUCCESS
+}
+
+// Data Quality Check Results
+model DataQualityCheck {
+  id                    String                @id @default(uuid())
+  checkName             String
+  checkType             String                // Completeness, Accuracy, Consistency, etc.
+  tableName             String
+  columnName            String?
+  
+  // Check results
+  status                QualityCheckStatus
+  recordsChecked        Int
+  recordsPassed         Int
+  recordsFailed         Int
+  
+  // Thresholds
+  expectedThreshold     Float
+  actualValue           Float
+  
+  // Details
+  failureDetails        String?               @db.Text
+  
+  executedAt            DateTime              @default(now())
+  
+  @@index([tableName, executedAt])
+  @@index([status])
+  @@map("data_quality_checks")
+}
+
+enum QualityCheckStatus {
+  PASSED
+  FAILED
+  WARNING
+}

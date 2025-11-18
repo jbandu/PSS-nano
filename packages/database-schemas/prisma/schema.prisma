@@ -1,3 +1,6 @@
+// Airline PSS Platform - Centralized Database Schema
+// Multi-tenant architecture with comprehensive airline operations support
+
 generator client {
   provider = "prisma-client-js"
   output   = "../node_modules/.prisma/client"
@@ -9,35 +12,358 @@ datasource db {
 }
 
 // ============================================================================
-// ENUMS
+// ORGANIZATION & MULTI-TENANCY
 // ============================================================================
 
-enum UserRole {
-  SUPER_ADMIN
-  ADMIN
-  AGENT
-  CUSTOMER
-  SYSTEM
+model Organization {
+  id                    String                  @id @default(uuid())
+  code                  String                  @unique // IATA airline code (e.g., "AA", "DL")
+  name                  String
+  legalName             String
+  iataCode              String?                 @unique
+  icaoCode              String?                 @unique
+  country               String
+  currency              String                  @default("USD")
+  timezone              String                  @default("UTC")
+  settings              Json?                   // Organization-specific settings
+  status                OrganizationStatus      @default(ACTIVE)
+  createdAt             DateTime                @default(now())
+  updatedAt             DateTime                @updatedAt
+  deletedAt             DateTime?
+
+  // Relationships
+  users                 User[]
+  flights               Flight[]
+  pnrs                  PNR[]
+  passengers            Passenger[]
+  fares                 Fare[]
+  ancillaryProducts     AncillaryProduct[]
+  payments              Payment[]
+  checkInTransactions   CheckInTransaction[]
+  boardingRecords       BoardingRecord[]
+  baggageTags           BaggageTag[]
+  campaigns             Campaign[]
+
+  @@index([code])
+  @@index([iataCode])
+  @@index([status])
+  @@map("organizations")
 }
 
-enum Status {
+enum OrganizationStatus {
   ACTIVE
-  INACTIVE
-  PENDING
   SUSPENDED
-  DELETED
+  INACTIVE
+}
+
+// ============================================================================
+// CORE ENTITIES - PNR & PASSENGERS
+// ============================================================================
+
+model PNR {
+  id                    String                  @id @default(uuid())
+  organizationId        String
+  locator               String                  @unique // 6-character alphanumeric
+  status                PNRStatus               @default(ACTIVE)
+  bookingChannel        BookingChannel          @default(WEB)
+  bookingSource         String?                 // Agency code, website, etc.
+  
+  // Contact information
+  contactEmail          String
+  contactPhone          String
+  contactName           String?
+  
+  // Booking details
+  totalAmount           Decimal                 @db.Decimal(10, 2)
+  currency              String                  @default("USD")
+  bookingDate           DateTime                @default(now())
+  ticketTimeLimit       DateTime?
+  
+  // Payment status
+  paymentStatus         PaymentStatus           @default(PENDING)
+  paidAmount            Decimal                 @default(0) @db.Decimal(10, 2)
+  
+  // Metadata
+  metadata              Json?
+  createdAt             DateTime                @default(now())
+  updatedAt             DateTime                @updatedAt
+  deletedAt             DateTime?               // Soft delete
+
+  // Relationships
+  organization          Organization            @relation(fields: [organizationId], references: [id])
+  passengers            Passenger[]
+  segments              PNRSegment[]
+  payments              Payment[]
+  ancillaries           PNRAncillary[]
+  tickets               Ticket[]
+  checkIns              CheckInTransaction[]
+  specialRequests       SpecialServiceRequest[]
+  
+  @@index([organizationId])
+  @@index([locator])
+  @@index([contactEmail])
+  @@index([status])
+  @@index([bookingDate])
+  @@index([deletedAt])
+  @@map("pnrs")
+}
+
+enum PNRStatus {
+  ACTIVE
+  CONFIRMED
+  TICKETED
+  CANCELLED
+  EXPIRED
+  NO_SHOW
+}
+
+enum BookingChannel {
+  WEB
+  MOBILE
+  AGENT
+  API
+  GDS
+  CALL_CENTER
+  KIOSK
+}
+
+enum PaymentStatus {
+  PENDING
+  PARTIAL
+  PAID
+  REFUNDED
+  FAILED
+}
+
+model PNRSegment {
+  id                    String                  @id @default(uuid())
+  pnrId                 String
+  flightId              String
+  segmentNumber         Int                     // 1, 2, 3, etc.
+  
+  // Flight details
+  origin                String                  // IATA airport code
+  destination           String                  // IATA airport code
+  departureDate         DateTime
+  arrivalDate           DateTime
+  
+  // Cabin and class
+  cabinClass            CabinClass
+  bookingClass          String                  // Fare class (Y, J, F, etc.)
+  fareBasis             String?
+  
+  // Status
+  status                SegmentStatus           @default(CONFIRMED)
+  
+  createdAt             DateTime                @default(now())
+  updatedAt             DateTime                @updatedAt
+
+  // Relationships
+  pnr                   PNR                     @relation(fields: [pnrId], references: [id], onDelete: Cascade)
+  flight                Flight                  @relation(fields: [flightId], references: [id])
+  
+  @@unique([pnrId, segmentNumber])
+  @@index([pnrId])
+  @@index([flightId])
+  @@index([origin, destination, departureDate])
+  @@map("pnr_segments")
+}
+
+enum SegmentStatus {
+  CONFIRMED
+  WAITLISTED
+  CANCELLED
+  FLOWN
+  NO_SHOW
+}
+
+model Passenger {
+  id                    String                  @id @default(uuid())
+  organizationId        String
+  pnrId                 String
+  
+  // Personal information
+  passengerType         PassengerType
+  title                 String?                 // Mr, Mrs, Ms, Dr, etc.
+  firstName             String
+  middleName            String?
+  lastName              String
+  dateOfBirth           DateTime?
+  gender                Gender?
+  
+  // Contact (may differ from PNR contact)
+  email                 String?
+  phone                 String?
+  
+  // Frequent flyer
+  frequentFlyerNumber   String?
+  frequentFlyerTier     String?                 // Silver, Gold, Platinum, etc.
+  
+  // Travel documents
+  passportNumber        String?
+  passportCountry       String?
+  passportExpiry        DateTime?
+  nationality           String?
+  
+  // Special services
+  wheelchairRequired    Boolean                 @default(false)
+  mealPreference        String?
+  seatPreference        String?
+  
+  // Metadata
+  metadata              Json?
+  createdAt             DateTime                @default(now())
+  updatedAt             DateTime                @updatedAt
+  deletedAt             DateTime?
+
+  // Relationships
+  organization          Organization            @relation(fields: [organizationId], references: [id])
+  pnr                   PNR                     @relation(fields: [pnrId], references: [id], onDelete: Cascade)
+  tickets               Ticket[]
+  checkIns              PassengerCheckIn[]
+  boardingPasses        BoardingPass[]
+  baggageTags           BaggageTag[]
+  specialRequests       SpecialServiceRequest[]
+  
+  @@index([organizationId])
+  @@index([pnrId])
+  @@index([lastName, firstName])
+  @@index([frequentFlyerNumber])
+  @@index([email])
+  @@index([deletedAt])
+  @@map("passengers")
+}
+
+enum PassengerType {
+  ADULT
+  CHILD
+  INFANT
+  SENIOR
+  STUDENT
+  MILITARY
+}
+
+enum Gender {
+  MALE
+  FEMALE
+  OTHER
+  UNSPECIFIED
+}
+
+// ============================================================================
+// CORE ENTITIES - FLIGHTS & INVENTORY
+// ============================================================================
+
+model Flight {
+  id                    String                  @id @default(uuid())
+  organizationId        String
+  
+  // Flight identification
+  flightNumber          String                  // e.g., "AA100"
+  operatingCarrier      String                  // IATA code
+  marketingCarrier      String                  // IATA code (for codeshare)
+  
+  // Route
+  origin                String                  // IATA airport code
+  destination           String                  // IATA airport code
+  
+  // Schedule
+  scheduledDeparture    DateTime
+  scheduledArrival      DateTime
+  actualDeparture       DateTime?
+  actualArrival         DateTime?
+  
+  // Aircraft
+  aircraftType          String                  // e.g., "Boeing 737-800"
+  aircraftRegistration  String?
+  tailNumber            String?
+  
+  // Configuration
+  totalSeats            Int
+  economySeats          Int
+  premiumEconomySeats   Int                     @default(0)
+  businessSeats         Int                     @default(0)
+  firstSeats            Int                     @default(0)
+  
+  // Status
+  status                FlightStatus            @default(SCHEDULED)
+  gate                  String?
+  terminal              String?
+  
+  // Operational
+  checkinOpenTime       DateTime?
+  checkinCloseTime      DateTime?
+  boardingTime          DateTime?
+  gateClosureTime       DateTime?
+  
+  // Metadata
+  metadata              Json?
+  createdAt             DateTime                @default(now())
+  updatedAt             DateTime                @updatedAt
+  deletedAt             DateTime?
+
+  // Relationships
+  organization          Organization            @relation(fields: [organizationId], references: [id])
+  inventory             FlightInventory[]
+  pnrSegments           PNRSegment[]
+  checkIns              CheckInTransaction[]
+  boardingRecords       BoardingRecord[]
+  flightOperations      FlightOperation[]
+  loadControl           LoadControl?
+  
+  @@index([organizationId])
+  @@index([flightNumber, scheduledDeparture])
+  @@index([origin, destination, scheduledDeparture])
+  @@index([status])
+  @@index([scheduledDeparture])
+  @@index([deletedAt])
+  @@map("flights")
 }
 
 enum FlightStatus {
   SCHEDULED
+  DELAYED
   BOARDING
   DEPARTED
   IN_FLIGHT
   LANDED
   ARRIVED
   CANCELLED
-  DELAYED
   DIVERTED
+}
+
+model FlightInventory {
+  id                    String                  @id @default(uuid())
+  flightId              String
+  
+  // Class configuration
+  cabinClass            CabinClass
+  bookingClass          String                  // Y, J, F, etc.
+  
+  // Inventory
+  totalSeats            Int
+  availableSeats        Int
+  bookedSeats           Int                     @default(0)
+  blockedSeats          Int                     @default(0)
+  
+  // Pricing
+  baseFare              Decimal                 @db.Decimal(10, 2)
+  currency              String                  @default("USD")
+  
+  // Availability control
+  isAvailable           Boolean                 @default(true)
+  oversellLimit         Int                     @default(0)
+  
+  createdAt             DateTime                @default(now())
+  updatedAt             DateTime                @updatedAt
+
+  // Relationships
+  flight                Flight                  @relation(fields: [flightId], references: [id], onDelete: Cascade)
+  
+  @@unique([flightId, cabinClass, bookingClass])
+  @@index([flightId])
+  @@index([cabinClass])
+  @@map("flight_inventory")
 }
 
 enum CabinClass {
@@ -47,37 +373,880 @@ enum CabinClass {
   FIRST
 }
 
-enum BookingClass {
-  Y // Economy Full Fare
-  M // Economy Discounted
-  B // Business Full Fare
-  J // Business Discounted
-  F // First Class
-  C // Business
+model SeatMap {
+  id                    String                  @id @default(uuid())
+  flightId              String
+  
+  // Seat details
+  seatNumber            String                  // e.g., "12A"
+  row                   Int
+  column                String                  // A, B, C, D, E, F
+  
+  // Classification
+  cabinClass            CabinClass
+  seatType              SeatType                @default(STANDARD)
+  
+  // Characteristics
+  isWindow              Boolean                 @default(false)
+  isAisle               Boolean                 @default(false)
+  isExitRow             Boolean                 @default(false)
+  hasExtraLegroom       Boolean                 @default(false)
+  
+  // Availability
+  status                SeatStatus              @default(AVAILABLE)
+  passengerId           String?
+  blockedBy             String?                 // Agent ID
+  blockedUntil          DateTime?
+  
+  // Pricing
+  extraCharge           Decimal?                @db.Decimal(10, 2)
+  
+  createdAt             DateTime                @default(now())
+  updatedAt             DateTime                @updatedAt
+
+  @@unique([flightId, seatNumber])
+  @@index([flightId])
+  @@index([status])
+  @@map("seat_maps")
 }
 
-enum PNRStatus {
-  PENDING
+enum SeatType {
+  STANDARD
+  PREFERRED
+  EXTRA_LEGROOM
+  EMERGENCY_EXIT
+  BASSINET
+  BLOCKED
+}
+
+enum SeatStatus {
+  AVAILABLE
+  OCCUPIED
+  BLOCKED
+  SELECTED
+  RESERVED
+}
+
+// ============================================================================
+// CORE ENTITIES - FARES & PRICING
+// ============================================================================
+
+model Fare {
+  id                    String                  @id @default(uuid())
+  organizationId        String
+  
+  // Fare identification
+  fareCode              String                  @unique
+  fareName              String
+  fareType              FareType                @default(PUBLISHED)
+  
+  // Route
+  origin                String                  // IATA airport code or country
+  destination           String                  // IATA airport code or country
+  routeType             RouteType               @default(ONE_WAY)
+  
+  // Class and cabin
+  cabinClass            CabinClass
+  bookingClass          String                  // Y, J, F, etc.
+  fareBasis             String
+  
+  // Pricing
+  baseFare              Decimal                 @db.Decimal(10, 2)
+  currency              String                  @default("USD")
+  
+  // Taxes and fees (can be JSON array)
+  taxes                 Json?                   // [{type: "YQ", amount: 50.00, currency: "USD"}]
+  
+  // Rules and restrictions
+  refundable            Boolean                 @default(false)
+  changeable            Boolean                 @default(true)
+  changefee             Decimal?                @db.Decimal(10, 2)
+  cancelFee             Decimal?                @db.Decimal(10, 2)
+  
+  // Baggage allowance
+  carryOnBags           Int                     @default(1)
+  checkedBags           Int                     @default(0)
+  baggageWeight         Int?                    // in kg
+  
+  // Advance purchase
+  advancePurchaseMin    Int?                    // days before departure
+  advancePurchaseMax    Int?                    // days before departure
+  
+  // Travel dates
+  validFrom             DateTime
+  validTo               DateTime
+  blackoutDates         Json?                   // Array of date ranges
+  
+  // Availability
+  isActive              Boolean                 @default(true)
+  minimumStay           Int?                    // days
+  maximumStay           Int?                    // days
+  
+  // Metadata
+  rules                 Json?                   // Complex fare rules
+  metadata              Json?
+  createdAt             DateTime                @default(now())
+  updatedAt             DateTime                @updatedAt
+  deletedAt             DateTime?
+
+  // Relationships
+  organization          Organization            @relation(fields: [organizationId], references: [id])
+  
+  @@index([organizationId])
+  @@index([fareCode])
+  @@index([origin, destination])
+  @@index([cabinClass])
+  @@index([validFrom, validTo])
+  @@index([isActive])
+  @@index([deletedAt])
+  @@map("fares")
+}
+
+enum FareType {
+  PUBLISHED
+  PRIVATE
+  NEGOTIATED
+  PROMOTIONAL
+  AWARD
+  STAFF
+}
+
+enum RouteType {
+  ONE_WAY
+  ROUND_TRIP
+  MULTI_CITY
+  OPEN_JAW
+}
+
+// ============================================================================
+// CORE ENTITIES - ANCILLARY PRODUCTS
+// ============================================================================
+
+model AncillaryProduct {
+  id                    String                  @id @default(uuid())
+  organizationId        String
+  
+  // Product identification
+  productCode           String                  @unique
+  productName           String
+  category              AncillaryCategory
+  
+  // Pricing
+  basePrice             Decimal                 @db.Decimal(10, 2)
+  currency              String                  @default("USD")
+  taxable               Boolean                 @default(true)
+  
+  // Availability
+  isActive              Boolean                 @default(true)
+  availableChannels     Json?                   // ["WEB", "MOBILE", "AGENT"]
+  
+  // Rules
+  allowMultiple         Boolean                 @default(false)
+  maxQuantity           Int?
+  applicableCabins      Json?                   // ["ECONOMY", "BUSINESS"]
+  applicableRoutes      Json?                   // [{origin: "JFK", destination: "LAX"}]
+  
+  // Description
+  description           String?
+  shortDescription      String?
+  imageUrl              String?
+  termsAndConditions    String?
+  
+  // Metadata
+  metadata              Json?
+  createdAt             DateTime                @default(now())
+  updatedAt             DateTime                @updatedAt
+  deletedAt             DateTime?
+
+  // Relationships
+  organization          Organization            @relation(fields: [organizationId], references: [id])
+  pnrAncillaries        PNRAncillary[]
+  
+  @@index([organizationId])
+  @@index([productCode])
+  @@index([category])
+  @@index([isActive])
+  @@index([deletedAt])
+  @@map("ancillary_products")
+}
+
+enum AncillaryCategory {
+  BAGGAGE
+  SEAT
+  MEAL
+  LOUNGE
+  PRIORITY_BOARDING
+  FAST_TRACK
+  INSURANCE
+  WIFI
+  ENTERTAINMENT
+  PET
+  SPORTS_EQUIPMENT
+  UPGRADE
+  OTHER
+}
+
+model PNRAncillary {
+  id                    String                  @id @default(uuid())
+  pnrId                 String
+  passengerId           String?                 // Null if applies to all passengers
+  productId             String
+  
+  // Quantity and pricing
+  quantity              Int                     @default(1)
+  unitPrice             Decimal                 @db.Decimal(10, 2)
+  totalPrice            Decimal                 @db.Decimal(10, 2)
+  currency              String                  @default("USD")
+  
+  // Status
+  status                AncillaryStatus         @default(CONFIRMED)
+  
+  // Metadata
+  metadata              Json?                   // Product-specific data
+  createdAt             DateTime                @default(now())
+  updatedAt             DateTime                @updatedAt
+
+  // Relationships
+  pnr                   PNR                     @relation(fields: [pnrId], references: [id], onDelete: Cascade)
+  product               AncillaryProduct        @relation(fields: [productId], references: [id])
+  
+  @@index([pnrId])
+  @@index([productId])
+  @@map("pnr_ancillaries")
+}
+
+enum AncillaryStatus {
   CONFIRMED
-  TICKETED
-  CHECKED_IN
-  BOARDED
-  FLOWN
   CANCELLED
-  NO_SHOW
+  REFUNDED
+  PENDING
+}
+
+// ============================================================================
+// TICKETING
+// ============================================================================
+
+model Ticket {
+  id                    String                  @id @default(uuid())
+  pnrId                 String
+  passengerId           String
+  
+  // Ticket details
+  ticketNumber          String                  @unique // 13-digit IATA ticket number
+  eTicketNumber         String?
+  ticketType            TicketType              @default(ETICKET)
+  
+  // Status
+  status                TicketStatus            @default(ISSUED)
+  
+  // Financial
+  baseFare              Decimal                 @db.Decimal(10, 2)
+  taxes                 Decimal                 @db.Decimal(10, 2)
+  total                 Decimal                 @db.Decimal(10, 2)
+  currency              String                  @default("USD")
+  
+  // Dates
+  issueDate             DateTime                @default(now())
+  validFrom             DateTime?
+  validTo               DateTime?
+  
+  // Exchange and refund
+  isRefundable          Boolean                 @default(false)
+  isChangeable          Boolean                 @default(true)
+  exchangedFrom         String?                 // Previous ticket number
+  exchangedTo           String?                 // New ticket number
+  
+  // Metadata
+  metadata              Json?
+  createdAt             DateTime                @default(now())
+  updatedAt             DateTime                @updatedAt
+
+  // Relationships
+  pnr                   PNR                     @relation(fields: [pnrId], references: [id])
+  passenger             Passenger               @relation(fields: [passengerId], references: [id])
+  refunds               Refund[]
+  
+  @@index([pnrId])
+  @@index([passengerId])
+  @@index([ticketNumber])
+  @@index([status])
+  @@map("tickets")
+}
+
+enum TicketType {
+  ETICKET
+  PAPER
+  MCO
+  EMD
+}
+
+enum TicketStatus {
+  ISSUED
+  USED
+  EXCHANGED
+  REFUNDED
+  VOIDED
   EXPIRED
 }
 
-enum PaymentStatus {
-  PENDING
-  AUTHORIZED
-  CAPTURED
+// ============================================================================
+// OPERATIONAL TABLES - CHECK-IN
+// ============================================================================
+
+model CheckInTransaction {
+  id                    String                  @id @default(uuid())
+  organizationId        String
+  pnrId                 String
+  flightId              String
+  
+  // Agent information
+  agentId               String?
+  agentName             String?
+  stationCode           String                  // Airport code
+  
+  // Transaction details
+  transactionType       CheckInType
+  status                CheckInStatus           @default(IN_PROGRESS)
+  
+  // Counts
+  totalPassengers       Int
+  checkedInPassengers   Int                     @default(0)
+  
+  // Timing
+  startTime             DateTime                @default(now())
+  completeTime          DateTime?
+  duration              Int?                    // Seconds
+  
+  // Metadata
+  metadata              Json?
+  createdAt             DateTime                @default(now())
+  updatedAt             DateTime                @updatedAt
+
+  // Relationships
+  organization          Organization            @relation(fields: [organizationId], references: [id])
+  pnr                   PNR                     @relation(fields: [pnrId], references: [id])
+  flight                Flight                  @relation(fields: [flightId], references: [id])
+  passengerCheckIns     PassengerCheckIn[]
+  
+  @@index([organizationId])
+  @@index([pnrId])
+  @@index([flightId])
+  @@index([status])
+  @@index([startTime])
+  @@map("checkin_transactions")
+}
+
+enum CheckInType {
+  WEB
+  MOBILE
+  KIOSK
+  AGENT
+  CURBSIDE
+}
+
+enum CheckInStatus {
+  IN_PROGRESS
   COMPLETED
   FAILED
-  REFUNDED
-  PARTIALLY_REFUNDED
   CANCELLED
-  CHARGEBACK
+}
+
+model PassengerCheckIn {
+  id                    String                  @id @default(uuid())
+  transactionId         String
+  passengerId           String
+  
+  // Assigned seat
+  seatNumber            String?
+  cabinClass            CabinClass
+  
+  // Boarding details
+  boardingZone          Int?
+  boardingSequence      Int?
+  boardingTime          DateTime?
+  gate                  String?
+  
+  // Status
+  status                PassengerCheckInStatus  @default(CHECKED_IN)
+  
+  // Timing
+  checkInTime           DateTime                @default(now())
+  
+  // Metadata
+  metadata              Json?
+  createdAt             DateTime                @default(now())
+  updatedAt             DateTime                @updatedAt
+
+  // Relationships
+  transaction           CheckInTransaction      @relation(fields: [transactionId], references: [id], onDelete: Cascade)
+  passenger             Passenger               @relation(fields: [passengerId], references: [id])
+  
+  @@index([transactionId])
+  @@index([passengerId])
+  @@index([status])
+  @@map("passenger_checkins")
+}
+
+enum PassengerCheckInStatus {
+  CHECKED_IN
+  STANDBY
+  CANCELLED
+  NO_SHOW
+  BOARDED
+}
+
+// ============================================================================
+// OPERATIONAL TABLES - BOARDING
+// ============================================================================
+
+model BoardingPass {
+  id                    String                  @id @default(uuid())
+  passengerId           String
+  
+  // Boarding pass details
+  boardingPassNumber    String                  @unique
+  barcodeData           String                  // IATA BCBP format
+  barcodeType           BarcodeType             @default(PDF417)
+  
+  // Flight and seat
+  flightNumber          String
+  origin                String
+  destination           String
+  departureDate         DateTime
+  seatNumber            String?
+  cabinClass            CabinClass
+  
+  // Boarding details
+  boardingZone          Int?
+  boardingSequence      Int?
+  boardingTime          DateTime?
+  gate                  String?
+  
+  // Status
+  status                BoardingPassStatus      @default(ISSUED)
+  boardedAt             DateTime?
+  
+  // Priority
+  isPriority            Boolean                 @default(false)
+  requiresAssistance    Boolean                 @default(false)
+  
+  // Metadata
+  metadata              Json?
+  createdAt             DateTime                @default(now())
+  updatedAt             DateTime                @updatedAt
+
+  // Relationships
+  passenger             Passenger               @relation(fields: [passengerId], references: [id])
+  boardingRecords       BoardingRecord[]
+  
+  @@index([passengerId])
+  @@index([boardingPassNumber])
+  @@index([flightNumber, departureDate])
+  @@index([status])
+  @@map("boarding_passes")
+}
+
+enum BarcodeType {
+  PDF417
+  QR_CODE
+  AZTEC
+  CODE128
+}
+
+enum BoardingPassStatus {
+  ISSUED
+  BOARDED
+  CANCELLED
+  EXPIRED
+}
+
+model BoardingRecord {
+  id                    String                  @id @default(uuid())
+  organizationId        String
+  boardingPassId        String
+  flightId              String
+  
+  // Scan details
+  scanTime              DateTime                @default(now())
+  scannedBy             String                  // Agent ID or gate reader ID
+  gateNumber            String
+  
+  // Validation
+  isValid               Boolean                 @default(true)
+  validationStatus      ValidationStatus
+  validationMessage     String?
+  
+  // Performance
+  processingTime        Int?                    // Milliseconds
+  
+  // Metadata
+  metadata              Json?
+  createdAt             DateTime                @default(now())
+
+  // Relationships
+  organization          Organization            @relation(fields: [organizationId], references: [id])
+  boardingPass          BoardingPass            @relation(fields: [boardingPassId], references: [id])
+  flight                Flight                  @relation(fields: [flightId], references: [id])
+  
+  @@index([organizationId])
+  @@index([boardingPassId])
+  @@index([flightId])
+  @@index([scanTime])
+  @@map("boarding_records")
+}
+
+enum ValidationStatus {
+  VALID
+  INVALID_FLIGHT
+  INVALID_DATE
+  ALREADY_BOARDED
+  GATE_CLOSED
+  CANCELLED
+  NO_SHOW
+}
+
+// ============================================================================
+// OPERATIONAL TABLES - BAGGAGE
+// ============================================================================
+
+model BaggageTag {
+  id                    String                  @id @default(uuid())
+  organizationId        String
+  passengerId           String
+  
+  // Tag details
+  tagNumber             String                  @unique // 10-digit IATA tag number
+  barcodeData           String
+  
+  // Routing
+  origin                String                  // IATA airport code
+  destination           String                  // IATA airport code
+  finalDestination      String?                 // For connections
+  
+  // Bag details
+  weight                Decimal                 @db.Decimal(6, 2)
+  weightUnit            String                  @default("KG")
+  bagType               BagType                 @default(CHECKED)
+  
+  // Status tracking
+  status                BaggageStatus           @default(CHECKED)
+  currentLocation       String?                 // Airport code
+  
+  // Flight
+  flightNumber          String
+  departureDate         DateTime
+  
+  // Charges
+  isFree                Boolean                 @default(true)
+  charge                Decimal?                @db.Decimal(10, 2)
+  currency              String                  @default("USD")
+  
+  // Metadata
+  metadata              Json?
+  createdAt             DateTime                @default(now())
+  updatedAt             DateTime                @updatedAt
+
+  // Relationships
+  organization          Organization            @relation(fields: [organizationId], references: [id])
+  passenger             Passenger               @relation(fields: [passengerId], references: [id])
+  trackingEvents        BaggageTrackingEvent[]
+  
+  @@index([organizationId])
+  @@index([passengerId])
+  @@index([tagNumber])
+  @@index([status])
+  @@index([flightNumber, departureDate])
+  @@map("baggage_tags")
+}
+
+enum BagType {
+  CHECKED
+  CARRY_ON
+  SPECIAL
+  SPORTS
+  OVERSIZED
+}
+
+enum BaggageStatus {
+  CHECKED
+  LOADED
+  IN_TRANSIT
+  ARRIVED
+  CLAIMED
+  DELAYED
+  MISHANDLED
+  LOST
+}
+
+model BaggageTrackingEvent {
+  id                    String                  @id @default(uuid())
+  baggageTagId          String
+  
+  // Event details
+  eventType             BaggageEventType
+  eventTime             DateTime                @default(now())
+  location              String                  // Airport code
+  
+  // Status
+  status                BaggageStatus
+  
+  // Agent/System
+  scannedBy             String?
+  
+  // Metadata
+  notes                 String?
+  metadata              Json?
+  createdAt             DateTime                @default(now())
+
+  // Relationships
+  baggageTag            BaggageTag              @relation(fields: [baggageTagId], references: [id], onDelete: Cascade)
+  
+  @@index([baggageTagId])
+  @@index([eventTime])
+  @@map("baggage_tracking_events")
+}
+
+enum BaggageEventType {
+  CHECKED_IN
+  LOADED
+  UNLOADED
+  TRANSFERRED
+  ARRIVED
+  CLAIMED
+  DELAYED
+  MISROUTED
+  DAMAGED
+  LOST
+  FOUND
+}
+
+// ============================================================================
+// OPERATIONAL TABLES - FLIGHT OPERATIONS
+// ============================================================================
+
+model FlightOperation {
+  id                    String                  @id @default(uuid())
+  flightId              String
+  
+  // Operations status
+  operationalStatus     OperationalStatus       @default(ON_TIME)
+  
+  // Delay information
+  delayMinutes          Int?
+  delayReason           String?
+  delayCode             String?                 // IATA delay code
+  
+  // Gate and terminal
+  scheduledGate         String?
+  actualGate            String?
+  scheduledTerminal     String?
+  actualTerminal        String?
+  
+  // Aircraft
+  aircraftRegistration  String?
+  tailNumber            String?
+  
+  // Crew
+  captainName           String?
+  crewCount             Int?
+  
+  // Fuel and weight
+  fuelOnBoard           Decimal?                @db.Decimal(10, 2)
+  fuelUnit              String?                 @default("KG")
+  
+  // Weather
+  weatherCondition      String?
+  visibility            String?
+  
+  // Remarks
+  remarks               String?
+  metadata              Json?
+  
+  createdAt             DateTime                @default(now())
+  updatedAt             DateTime                @updatedAt
+
+  // Relationships
+  flight                Flight                  @relation(fields: [flightId], references: [id], onDelete: Cascade)
+  
+  @@index([flightId])
+  @@index([operationalStatus])
+  @@map("flight_operations")
+}
+
+enum OperationalStatus {
+  ON_TIME
+  DELAYED
+  CANCELLED
+  DIVERTED
+  RETURNED
+  AIR_TURNBACK
+}
+
+model LoadControl {
+  id                    String                  @id @default(uuid())
+  flightId              String                  @unique
+  
+  // Passenger load
+  totalPassengers       Int                     @default(0)
+  adultCount            Int                     @default(0)
+  childCount            Int                     @default(0)
+  infantCount           Int                     @default(0)
+  
+  // Cabin breakdown
+  firstClassCount       Int                     @default(0)
+  businessClassCount    Int                     @default(0)
+  economyClassCount     Int                     @default(0)
+  
+  // Baggage
+  totalBags             Int                     @default(0)
+  totalBaggageWeight    Decimal                 @default(0) @db.Decimal(10, 2)
+  
+  // Cargo
+  cargoWeight           Decimal                 @default(0) @db.Decimal(10, 2)
+  mailWeight            Decimal                 @default(0) @db.Decimal(10, 2)
+  
+  // Weight calculations
+  totalWeight           Decimal                 @default(0) @db.Decimal(10, 2)
+  weightUnit            String                  @default("KG")
+  
+  // Balance
+  centerOfGravity       Decimal?                @db.Decimal(6, 2)
+  isWithinLimits        Boolean                 @default(true)
+  
+  // Status
+  status                LoadControlStatus       @default(OPEN)
+  closedAt              DateTime?
+  closedBy              String?
+  
+  // Metadata
+  metadata              Json?
+  createdAt             DateTime                @default(now())
+  updatedAt             DateTime                @updatedAt
+
+  // Relationships
+  flight                Flight                  @relation(fields: [flightId], references: [id], onDelete: Cascade)
+  
+  @@index([flightId])
+  @@index([status])
+  @@map("load_control")
+}
+
+enum LoadControlStatus {
+  OPEN
+  PRELIMINARY
+  FINAL
+  CLOSED
+}
+
+// ============================================================================
+// SPECIAL SERVICE REQUESTS (SSR)
+// ============================================================================
+
+model SpecialServiceRequest {
+  id                    String                  @id @default(uuid())
+  pnrId                 String
+  passengerId           String?                 // Null if applies to entire booking
+  
+  // SSR details
+  ssrCode               String                  // IATA SSR code (WCHR, VGML, etc.)
+  ssrType               SSRType
+  description           String
+  
+  // Status
+  status                SSRStatus               @default(REQUESTED)
+  
+  // Fulfillment
+  confirmedBy           String?
+  confirmedAt           DateTime?
+  notes                 String?
+  
+  // Metadata
+  metadata              Json?
+  createdAt             DateTime                @default(now())
+  updatedAt             DateTime                @updatedAt
+
+  // Relationships
+  pnr                   PNR                     @relation(fields: [pnrId], references: [id], onDelete: Cascade)
+  passenger             Passenger?              @relation(fields: [passengerId], references: [id])
+  
+  @@index([pnrId])
+  @@index([passengerId])
+  @@index([ssrCode])
+  @@index([status])
+  @@map("special_service_requests")
+}
+
+enum SSRType {
+  MEAL
+  MEDICAL
+  WHEELCHAIR
+  UNACCOMPANIED_MINOR
+  PET
+  INFANT
+  SPECIAL_BAGGAGE
+  VIP
+  OTHER
+}
+
+enum SSRStatus {
+  REQUESTED
+  CONFIRMED
+  DENIED
+  CANCELLED
+}
+
+// ============================================================================
+// FINANCIAL TABLES - PAYMENTS
+// ============================================================================
+
+model Payment {
+  id                    String                  @id @default(uuid())
+  organizationId        String
+  pnrId                 String
+  
+  // Payment details
+  amount                Decimal                 @db.Decimal(10, 2)
+  currency              String                  @default("USD")
+  paymentMethod         PaymentMethod
+  
+  // Status
+  status                PaymentTransactionStatus @default(PENDING)
+  
+  // Gateway
+  gatewayProvider       String?                 // Stripe, PayPal, etc.
+  gatewayTransactionId  String?                 @unique
+  gatewayResponse       Json?
+  
+  // Card details (if applicable, tokenized)
+  cardType              String?                 // Visa, MasterCard, Amex
+  cardLast4             String?
+  cardToken             String?
+  
+  // Billing
+  billingName           String
+  billingEmail          String
+  billingAddress        Json?
+  
+  // Reconciliation
+  settledAt             DateTime?
+  settlementBatch       String?
+  
+  // Metadata
+  metadata              Json?
+  createdAt             DateTime                @default(now())
+  updatedAt             DateTime                @updatedAt
+
+  // Relationships
+  organization          Organization            @relation(fields: [organizationId], references: [id])
+  pnr                   PNR                     @relation(fields: [pnrId], references: [id])
+  refunds               Refund[]
+  
+  @@index([organizationId])
+  @@index([pnrId])
+  @@index([gatewayTransactionId])
+  @@index([status])
+  @@index([createdAt])
+  @@map("payments")
 }
 
 enum PaymentMethod {
@@ -85,169 +1254,173 @@ enum PaymentMethod {
   DEBIT_CARD
   PAYPAL
   BANK_TRANSFER
-  WALLET
+  CASH
   VOUCHER
   POINTS
+  CRYPTO
 }
 
-enum PaymentGateway {
-  STRIPE
-  PAYPAL
-  SQUARE
-  ADYEN
-  BRAINTREE
-}
-
-enum NotificationType {
-  EMAIL
-  SMS
-  PUSH
-  IN_APP
-  WHATSAPP
-}
-
-enum NotificationStatus {
+enum PaymentTransactionStatus {
   PENDING
-  QUEUED
-  SENT
-  DELIVERED
-  FAILED
-  BOUNCED
-}
-
-enum CheckInStatus {
-  NOT_STARTED
-  IN_PROGRESS
+  PROCESSING
   COMPLETED
   FAILED
+  CANCELLED
+  REFUNDED
+  PARTIALLY_REFUNDED
 }
 
-enum BoardingStatus {
-  NOT_BOARDED
-  BOARDING
-  BOARDED
-  GATE_CLOSED
-  NO_SHOW
-}
-
-enum BaggageStatus {
-  CHECKED_IN
-  LOADED
-  IN_TRANSIT
-  ARRIVED
-  DELIVERED
-  LOST
-  DELAYED
-  DAMAGED
-}
-
-enum TransactionType {
-  BOOKING
-  CANCELLATION
-  REFUND
-  ANCILLARY
-  SEAT_SELECTION
-  UPGRADE
-  CHANGE_FEE
-  NO_SHOW_FEE
-}
-
-enum FareType {
-  PUBLISHED
-  PRIVATE
-  PROMOTIONAL
-  CORPORATE
-  GROUP
-  STAFF
-}
-
-enum AncillaryType {
-  BAGGAGE
-  SEAT_SELECTION
-  MEAL
-  LOUNGE
-  PRIORITY_BOARDING
-  EXTRA_LEGROOM
-  WIFI
-  INSURANCE
-  PET
-  SPORTS_EQUIPMENT
-}
-
-enum GenderType {
-  MALE
-  FEMALE
-  OTHER
-  PREFER_NOT_TO_SAY
-}
-
-enum PassengerType {
-  ADULT
-  CHILD
-  INFANT
-  SENIOR
-  STUDENT
-}
-
-enum DocumentType {
-  PASSPORT
-  NATIONAL_ID
-  DRIVERS_LICENSE
-  BIRTH_CERTIFICATE
-}
-
-enum AuditAction {
-  CREATE
-  UPDATE
-  DELETE
-  LOGIN
-  LOGOUT
-  VIEW
-  EXPORT
-  IMPORT
-}
-
-// ============================================================================
-// MULTI-TENANT & ORGANIZATION
-// ============================================================================
-
-model Organization {
-  id          String   @id @default(uuid())
-  code        String   @unique // IATA airline code
-  name        String
-  legalName   String
-  country     String
-  headquarters String?
-  logo        String?
-  website     String?
-  contactEmail String
-  contactPhone String?
-
-  // Settings
-  settings    Json? // timezone, currency, language, etc.
-  features    Json? // enabled features
-
+model Refund {
+  id                    String                  @id @default(uuid())
+  paymentId             String
+  ticketId              String?
+  
+  // Refund details
+  amount                Decimal                 @db.Decimal(10, 2)
+  currency              String                  @default("USD")
+  refundType            RefundType
+  
+  // Reason
+  reason                String
+  reasonCode            String?
+  
   // Status
-  status      Status   @default(ACTIVE)
-  isActive    Boolean  @default(true)
-  deletedAt   DateTime?
+  status                RefundStatus            @default(PENDING)
+  
+  // Processing
+  processedBy           String?
+  processedAt           DateTime?
+  
+  // Gateway
+  gatewayRefundId       String?
+  gatewayResponse       Json?
+  
+  // Metadata
+  metadata              Json?
+  createdAt             DateTime                @default(now())
+  updatedAt             DateTime                @updatedAt
 
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
-
-  // Relations
-  users       User[]
-  flights     Flight[]
-  fares       Fare[]
-  ancillaries AncillaryProduct[]
-  pnrs        PNR[]
-  apiKeys     ApiKey[]
-  campaigns   Campaign[]
-
-  @@index([code])
+  // Relationships
+  payment               Payment                 @relation(fields: [paymentId], references: [id])
+  ticket                Ticket?                 @relation(fields: [ticketId], references: [id])
+  
+  @@index([paymentId])
+  @@index([ticketId])
   @@index([status])
-  @@index([isActive])
-  @@map("organizations")
+  @@index([createdAt])
+  @@map("refunds")
+}
+
+enum RefundType {
+  FULL
+  PARTIAL
+  CANCELLATION_FEE
+  CHANGE_FEE
+  VOLUNTARY
+  INVOLUNTARY
+}
+
+enum RefundStatus {
+  PENDING
+  APPROVED
+  PROCESSING
+  COMPLETED
+  REJECTED
+  FAILED
+}
+
+model RevenueAccounting {
+  id                    String                  @id @default(uuid())
+  organizationId        String
+  
+  // Period
+  accountingPeriod      String                  // YYYY-MM
+  accountingDate        DateTime
+  
+  // Revenue categories
+  ticketRevenue         Decimal                 @default(0) @db.Decimal(12, 2)
+  ancillaryRevenue      Decimal                 @default(0) @db.Decimal(12, 2)
+  baggageRevenue        Decimal                 @default(0) @db.Decimal(12, 2)
+  seatRevenue           Decimal                 @default(0) @db.Decimal(12, 2)
+  otherRevenue          Decimal                 @default(0) @db.Decimal(12, 2)
+  
+  // Adjustments
+  refunds               Decimal                 @default(0) @db.Decimal(12, 2)
+  adjustments           Decimal                 @default(0) @db.Decimal(12, 2)
+  
+  // Net revenue
+  grossRevenue          Decimal                 @default(0) @db.Decimal(12, 2)
+  netRevenue            Decimal                 @default(0) @db.Decimal(12, 2)
+  
+  // Currency
+  currency              String                  @default("USD")
+  
+  // Status
+  status                AccountingStatus        @default(DRAFT)
+  reconciledAt          DateTime?
+  
+  // Metadata
+  metadata              Json?
+  createdAt             DateTime                @default(now())
+  updatedAt             DateTime                @updatedAt
+
+  @@unique([organizationId, accountingPeriod])
+  @@index([organizationId])
+  @@index([accountingPeriod])
+  @@index([accountingDate])
+  @@map("revenue_accounting")
+}
+
+enum AccountingStatus {
+  DRAFT
+  PENDING
+  RECONCILED
+  CLOSED
+}
+
+model Commission {
+  id                    String                  @id @default(uuid())
+  organizationId        String
+  
+  // Agent/Agency
+  agentId               String
+  agentName             String
+  agencyCode            String?
+  
+  // Booking reference
+  pnrLocator            String
+  ticketNumber          String?
+  
+  // Commission calculation
+  baseAmount            Decimal                 @db.Decimal(10, 2)
+  commissionRate        Decimal                 @db.Decimal(5, 2) // Percentage
+  commissionAmount      Decimal                 @db.Decimal(10, 2)
+  currency              String                  @default("USD")
+  
+  // Status
+  status                CommissionStatus        @default(PENDING)
+  
+  // Payment
+  paidAt                DateTime?
+  paymentReference      String?
+  
+  // Metadata
+  metadata              Json?
+  createdAt             DateTime                @default(now())
+  updatedAt             DateTime                @updatedAt
+
+  @@index([organizationId])
+  @@index([agentId])
+  @@index([pnrLocator])
+  @@index([status])
+  @@map("commissions")
+}
+
+enum CommissionStatus {
+  PENDING
+  APPROVED
+  PAID
+  CANCELLED
 }
 
 // ============================================================================
@@ -255,1135 +1428,254 @@ model Organization {
 // ============================================================================
 
 model User {
-  id              String    @id @default(uuid())
-  organizationId  String
-  email           String    @unique
-  password        String
-
+  id                    String                  @id @default(uuid())
+  organizationId        String
+  
+  // Basic info
+  email                 String                  @unique
+  username              String?                 @unique
+  passwordHash          String
+  
   // Profile
-  firstName       String
-  lastName        String
-  middleName      String?
-  gender          GenderType?
-  dateOfBirth     DateTime?
-  phoneNumber     String?
-  profilePhoto    String?
+  firstName             String
+  lastName              String
+  phone                 String?
+  
+  // Status
+  status                UserStatus              @default(ACTIVE)
+  emailVerified         Boolean                 @default(false)
+  emailVerifiedAt       DateTime?
+  
+  // Security
+  lastLoginAt           DateTime?
+  lastLoginIp           String?
+  failedLoginAttempts   Int                     @default(0)
+  lockedUntil           DateTime?
+  mustChangePassword    Boolean                 @default(false)
+  
+  // MFA
+  mfaEnabled            Boolean                 @default(false)
+  mfaSecret             String?
+  
+  // Metadata
+  metadata              Json?
+  createdAt             DateTime                @default(now())
+  updatedAt             DateTime                @updatedAt
+  deletedAt             DateTime?
 
-  // Authentication
-  emailVerified   Boolean   @default(false)
-  phoneVerified   Boolean   @default(false)
-  twoFactorEnabled Boolean  @default(false)
-  lastLoginAt     DateTime?
-  lastLoginIp     String?
-
-  // Role & Permissions
-  role            UserRole  @default(CUSTOMER)
-  status          Status    @default(ACTIVE)
-
-  // Soft Delete
-  isActive        Boolean   @default(true)
-  deletedAt       DateTime?
-
-  // Preferences
-  preferences     Json? // language, currency, notifications
-
-  createdAt       DateTime  @default(now())
-  updatedAt       DateTime  @updatedAt
-
-  // Relations
-  organization    Organization @relation(fields: [organizationId], references: [id])
-  roles           UserRoleAssignment[]
-  pnrs            PNR[]
-  payments        Payment[]
-  notifications   Notification[]
-  checkIns        CheckIn[]
-  auditLogs       AuditLog[]
-  apiKeys         ApiKey[]
-  segments        CustomerSegment[]
-
+  // Relationships
+  organization          Organization            @relation(fields: [organizationId], references: [id])
+  roles                 UserRole[]
+  apiKeys               ApiKey[]
+  auditLogs             AuditLog[]
+  
   @@index([organizationId])
   @@index([email])
+  @@index([username])
   @@index([status])
-  @@index([role])
-  @@index([isActive])
-  @@index([lastLoginAt])
+  @@index([deletedAt])
   @@map("users")
 }
 
+enum UserStatus {
+  ACTIVE
+  INACTIVE
+  SUSPENDED
+  LOCKED
+}
+
 model Role {
-  id          String   @id @default(uuid())
-  name        String   @unique
-  description String?
+  id                    String                  @id @default(uuid())
+  
+  // Role details
+  name                  String                  @unique
+  displayName           String
+  description           String?
+  
+  // Type
+  isSystem              Boolean                 @default(false)
+  level                 RoleLevel               @default(USER)
+  
+  // Status
+  isActive              Boolean                 @default(true)
+  
+  createdAt             DateTime                @default(now())
+  updatedAt             DateTime                @updatedAt
 
-  // Permissions as JSON array
-  permissions Json
-
-  isSystem    Boolean  @default(false)
-  isActive    Boolean  @default(true)
-
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
-
-  // Relations
-  userRoles   UserRoleAssignment[]
-
+  // Relationships
+  userRoles             UserRole[]
+  permissions           RolePermission[]
+  
   @@index([name])
   @@index([isActive])
   @@map("roles")
 }
 
-model UserRoleAssignment {
-  id        String   @id @default(uuid())
-  userId    String
-  roleId    String
+enum RoleLevel {
+  SUPER_ADMIN
+  ADMIN
+  MANAGER
+  AGENT
+  USER
+}
 
-  grantedBy String?
-  grantedAt DateTime @default(now())
-  expiresAt DateTime?
+model UserRole {
+  id                    String                  @id @default(uuid())
+  userId                String
+  roleId                String
+  
+  // Assignment
+  assignedBy            String?
+  assignedAt            DateTime                @default(now())
+  
+  // Validity
+  validFrom             DateTime?
+  validTo               DateTime?
 
-  isActive  Boolean  @default(true)
-
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
-
-  // Relations
-  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
-  role      Role     @relation(fields: [roleId], references: [id], onDelete: Cascade)
-
+  // Relationships
+  user                  User                    @relation(fields: [userId], references: [id], onDelete: Cascade)
+  role                  Role                    @relation(fields: [roleId], references: [id], onDelete: Cascade)
+  
   @@unique([userId, roleId])
   @@index([userId])
   @@index([roleId])
-  @@index([isActive])
-  @@map("user_role_assignments")
+  @@map("user_roles")
+}
+
+model Permission {
+  id                    String                  @id @default(uuid())
+  
+  // Permission details
+  name                  String                  @unique
+  resource              String                  // e.g., "pnr", "flight", "user"
+  action                PermissionAction
+  
+  // Description
+  displayName           String
+  description           String?
+  
+  createdAt             DateTime                @default(now())
+
+  // Relationships
+  rolePermissions       RolePermission[]
+  
+  @@index([name])
+  @@index([resource])
+  @@map("permissions")
+}
+
+enum PermissionAction {
+  CREATE
+  READ
+  UPDATE
+  DELETE
+  EXECUTE
+  MANAGE
+}
+
+model RolePermission {
+  id                    String                  @id @default(uuid())
+  roleId                String
+  permissionId          String
+  
+  createdAt             DateTime                @default(now())
+
+  // Relationships
+  role                  Role                    @relation(fields: [roleId], references: [id], onDelete: Cascade)
+  permission            Permission              @relation(fields: [permissionId], references: [id], onDelete: Cascade)
+  
+  @@unique([roleId, permissionId])
+  @@index([roleId])
+  @@index([permissionId])
+  @@map("role_permissions")
 }
 
 model ApiKey {
-  id              String   @id @default(uuid())
-  organizationId  String
-  userId          String?
+  id                    String                  @id @default(uuid())
+  userId                String
+  
+  // Key details
+  name                  String
+  keyHash               String                  @unique
+  keyPrefix             String                  // First 8 chars for identification
+  
+  // Scope
+  scopes                Json?                   // Array of allowed scopes
+  
+  // Usage limits
+  rateLimit             Int?                    // Requests per minute
+  
+  // Status
+  isActive              Boolean                 @default(true)
+  
+  // Validity
+  expiresAt             DateTime?
+  lastUsedAt            DateTime?
+  
+  // Metadata
+  metadata              Json?
+  createdAt             DateTime                @default(now())
+  updatedAt             DateTime                @updatedAt
 
-  name            String
-  key             String   @unique
-  secret          String
-
-  // Permissions
-  scopes          String[] // read:flights, write:bookings, etc.
-
-  // Usage
-  lastUsedAt      DateTime?
-  usageCount      Int       @default(0)
-  rateLimit       Int?      @default(1000) // per hour
-
-  // Expiry
-  expiresAt       DateTime?
-
-  isActive        Boolean   @default(true)
-  deletedAt       DateTime?
-
-  createdAt       DateTime  @default(now())
-  updatedAt       DateTime  @updatedAt
-
-  // Relations
-  organization    Organization @relation(fields: [organizationId], references: [id])
-  user            User?     @relation(fields: [userId], references: [id])
-
-  @@index([organizationId])
+  // Relationships
+  user                  User                    @relation(fields: [userId], references: [id], onDelete: Cascade)
+  
   @@index([userId])
-  @@index([key])
+  @@index([keyHash])
+  @@index([keyPrefix])
   @@index([isActive])
   @@map("api_keys")
 }
 
 model AuditLog {
-  id              String      @id @default(uuid())
-  userId          String?
+  id                    String                  @id @default(uuid())
+  
+  // Actor
+  userId                String?
+  userEmail             String?
+  ipAddress             String?
+  userAgent             String?
+  
+  // Action
+  action                AuditAction
+  resource              String                  // Table or entity name
+  resourceId            String?                 // ID of affected record
+  
+  // Details
+  oldValues             Json?
+  newValues             Json?
+  
+  // Context
+  organizationId        String?
+  
+  // Metadata
+  metadata              Json?
+  timestamp             DateTime                @default(now())
 
-  action          AuditAction
-  entity          String      // table name
-  entityId        String      // record id
-
-  changes         Json?       // before/after values
-  metadata        Json?       // request info, IP, etc.
-
-  ipAddress       String?
-  userAgent       String?
-
-  createdAt       DateTime    @default(now())
-
-  // Relations
-  user            User?       @relation(fields: [userId], references: [id])
-
+  // Relationships
+  user                  User?                   @relation(fields: [userId], references: [id])
+  
   @@index([userId])
-  @@index([entity, entityId])
   @@index([action])
-  @@index([createdAt])
+  @@index([resource])
+  @@index([resourceId])
+  @@index([organizationId])
+  @@index([timestamp])
   @@map("audit_logs")
 }
 
-// ============================================================================
-// CORE ENTITIES - FLIGHTS & INVENTORY
-// ============================================================================
-
-model Airport {
-  id          String   @id @default(uuid())
-  code        String   @unique // IATA code
-  name        String
-  city        String
-  country     String
-  timezone    String
-  latitude    Float?
-  longitude   Float?
-
-  isActive    Boolean  @default(true)
-
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
-
-  // Relations
-  departureFlights Flight[] @relation("DepartureAirport")
-  arrivalFlights   Flight[] @relation("ArrivalAirport")
-
-  @@index([code])
-  @@index([country])
-  @@map("airports")
-}
-
-model Aircraft {
-  id              String   @id @default(uuid())
-  registration    String   @unique
-  type            String   // B737, A320, etc.
-  manufacturer    String
-  model           String
-
-  // Configuration
-  totalSeats      Int
-  configuration   Json     // cabin layout
-
-  isActive        Boolean  @default(true)
-  deletedAt       DateTime?
-
-  createdAt       DateTime @default(now())
-  updatedAt       DateTime @updatedAt
-
-  // Relations
-  flights         Flight[]
-
-  @@index([registration])
-  @@index([type])
-  @@index([isActive])
-  @@map("aircraft")
-}
-
-model Flight {
-  id                String       @id @default(uuid())
-  organizationId    String
-
-  flightNumber      String
-  operatingCarrier  String       // Airline code operating the flight
-  marketingCarrier  String?      // Airline code marketing the flight (for codeshare)
-
-  // Aircraft
-  aircraftId        String?
-  aircraftType      String
-
-  // Route
-  departureAirportId String
-  arrivalAirportId   String
-
-  // Schedule
-  scheduledDeparture DateTime
-  scheduledArrival   DateTime
-  actualDeparture    DateTime?
-  actualArrival      DateTime?
-
-  // Terminal & Gate
-  departureTerminal  String?
-  departureGate      String?
-  arrivalTerminal    String?
-  arrivalGate        String?
-
-  // Status
-  status            FlightStatus @default(SCHEDULED)
-
-  // Capacity
-  totalSeats        Int
-  availableSeats    Int
-
-  // Recurrence (for regular flights)
-  daysOfWeek        Int[]        // 0=Sunday, 6=Saturday
-  effectiveFrom     DateTime
-  effectiveTo       DateTime
-
-  // Operational
-  loadFactor        Float?       @default(0)
-  onTimePerformance Float?
-
-  isActive          Boolean      @default(true)
-  deletedAt         DateTime?
-
-  createdAt         DateTime     @default(now())
-  updatedAt         DateTime     @updatedAt
-
-  // Relations
-  organization      Organization @relation(fields: [organizationId], references: [id])
-  aircraft          Aircraft?    @relation(fields: [aircraftId], references: [id])
-  departureAirport  Airport      @relation("DepartureAirport", fields: [departureAirportId], references: [id])
-  arrivalAirport    Airport      @relation("ArrivalAirport", fields: [arrivalAirportId], references: [id])
-
-  inventories       Inventory[]
-  seats             Seat[]
-  pnrs              PNR[]
-  fares             Fare[]
-  loadControl       LoadControl?
-  flightOperations  FlightOperation[]
-
-  @@index([organizationId])
-  @@index([flightNumber])
-  @@index([departureAirportId, arrivalAirportId])
-  @@index([scheduledDeparture])
-  @@index([status])
-  @@index([isActive])
-  @@map("flights")
-}
-
-model Inventory {
-  id              String      @id @default(uuid())
-  flightId        String
-  cabinClass      CabinClass
-  bookingClass    BookingClass
-
-  totalSeats      Int
-  availableSeats  Int
-  bookedSeats     Int         @default(0)
-  blockedSeats    Int         @default(0)
-
-  // Revenue Management
-  authorizedSeats Int
-  oversoldSeats   Int         @default(0)
-
-  isActive        Boolean     @default(true)
-
-  createdAt       DateTime    @default(now())
-  updatedAt       DateTime    @updatedAt
-
-  // Relations
-  flight          Flight      @relation(fields: [flightId], references: [id], onDelete: Cascade)
-
-  @@unique([flightId, cabinClass, bookingClass])
-  @@index([flightId])
-  @@index([cabinClass])
-  @@index([availableSeats])
-  @@map("inventories")
-}
-
-model Seat {
-  id              String      @id @default(uuid())
-  flightId        String
-
-  seatNumber      String      // 12A, 15F, etc.
-  row             Int
-  column          String      // A, B, C, etc.
-
-  cabinClass      CabinClass
-
-  // Characteristics
-  isWindow        Boolean     @default(false)
-  isAisle         Boolean     @default(false)
-  isEmergencyExit Boolean     @default(false)
-  hasExtraLegroom Boolean     @default(false)
-  hasRestrictions Boolean     @default(false)
-  restrictions    String?     // JSON or text
-
-  // Availability
-  isAvailable     Boolean     @default(true)
-  isBlocked       Boolean     @default(false)
-
-  // Pricing
-  basePrice       Float?
-  currentPrice    Float?
-
-  // Assignment
-  passengerId     String?
-  pnrId           String?
-
-  createdAt       DateTime    @default(now())
-  updatedAt       DateTime    @updatedAt
-
-  // Relations
-  flight          Flight      @relation(fields: [flightId], references: [id], onDelete: Cascade)
-  passenger       Passenger?  @relation(fields: [passengerId], references: [id])
-  pnr             PNR?        @relation(fields: [pnrId], references: [id])
-
-  @@unique([flightId, seatNumber])
-  @@index([flightId, isAvailable])
-  @@index([cabinClass])
-  @@index([passengerId])
-  @@index([pnrId])
-  @@map("seats")
-}
-
-// ============================================================================
-// FARES & ANCILLARIES
-// ============================================================================
-
-model Fare {
-  id              String      @id @default(uuid())
-  organizationId  String
-  flightId        String?     // Null for fare rules
-
-  fareClass       String
-  fareType        FareType
-  cabinClass      CabinClass
-  bookingClass    BookingClass
-
-  // Pricing
-  baseAmount      Float
-  currency        String      @default("USD")
-
-  // Taxes & Fees (as JSON for flexibility)
-  taxes           Json?
-
-  // Availability
-  validFrom       DateTime
-  validTo         DateTime
-
-  // Restrictions
-  minStay         Int?        // days
-  maxStay         Int?        // days
-  advancePurchase Int?        // days before departure
-
-  // Change & Cancellation
-  isRefundable    Boolean     @default(false)
-  isChangeable    Boolean     @default(true)
-  changeFee       Float?
-  cancellationFee Float?
-
-  // Baggage
-  baggageAllowance Json?      // checked & carry-on
-
-  // Rules
-  rules           Json?       // complex fare rules
-
-  isActive        Boolean     @default(true)
-  deletedAt       DateTime?
-
-  createdAt       DateTime    @default(now())
-  updatedAt       DateTime    @updatedAt
-
-  // Relations
-  organization    Organization @relation(fields: [organizationId], references: [id])
-  flight          Flight?      @relation(fields: [flightId], references: [id])
-  pnrSegments     PNRSegment[]
-
-  @@index([organizationId])
-  @@index([flightId])
-  @@index([fareClass])
-  @@index([fareType])
-  @@index([validFrom, validTo])
-  @@index([isActive])
-  @@map("fares")
-}
-
-model AncillaryProduct {
-  id              String          @id @default(uuid())
-  organizationId  String
-
-  code            String          @unique
-  name            String
-  description     String?
-  type            AncillaryType
-
-  // Pricing
-  basePrice       Float
-  currency        String          @default("USD")
-
-  // Applicability
-  cabinClasses    CabinClass[]
-  fareBases       String[]        // which fares can purchase this
-
-  // Availability
-  isActive        Boolean         @default(true)
-  availableFrom   DateTime?
-  availableTo     DateTime?
-
-  // Inventory
-  hasInventory    Boolean         @default(false)
-  totalInventory  Int?
-  availableInventory Int?
-
-  // Rules
-  maxQuantity     Int?            @default(1)
-  rules           Json?
-
-  deletedAt       DateTime?
-
-  createdAt       DateTime        @default(now())
-  updatedAt       DateTime        @updatedAt
-
-  // Relations
-  organization    Organization    @relation(fields: [organizationId], references: [id])
-  purchases       AncillaryPurchase[]
-
-  @@index([organizationId])
-  @@index([code])
-  @@index([type])
-  @@index([isActive])
-  @@map("ancillary_products")
-}
-
-model AncillaryPurchase {
-  id              String           @id @default(uuid())
-  pnrId           String
-  passengerId     String?
-  productId       String
-
-  quantity        Int              @default(1)
-  unitPrice       Float
-  totalPrice      Float
-  currency        String           @default("USD")
-
-  // Status
-  status          String           @default("CONFIRMED")
-
-  createdAt       DateTime         @default(now())
-  updatedAt       DateTime         @updatedAt
-
-  // Relations
-  pnr             PNR              @relation(fields: [pnrId], references: [id], onDelete: Cascade)
-  passenger       Passenger?       @relation(fields: [passengerId], references: [id])
-  product         AncillaryProduct @relation(fields: [productId], references: [id])
-
-  @@index([pnrId])
-  @@index([passengerId])
-  @@index([productId])
-  @@map("ancillary_purchases")
-}
-
-// ============================================================================
-// PNR & PASSENGERS
-// ============================================================================
-
-model PNR {
-  id              String      @id @default(uuid())
-  organizationId  String
-  userId          String
-
-  // PNR Details
-  pnr             String      @unique // 6-character alphanumeric
-  locator         String?     // GDS locator if different
-
-  // Status
-  status          PNRStatus   @default(PENDING)
-
-  // Contact
-  contactEmail    String
-  contactPhone    String
-  contactName     String?
-
-  // Booking Details
-  bookingChannel  String?     // WEB, MOBILE, GDS, API, AGENT
-  bookingAgent    String?
-  bookedByUserId  String?
-
-  // Pricing
-  totalAmount     Float
-  baseAmount      Float
-  taxAmount       Float
-  feeAmount       Float       @default(0)
-  currency        String      @default("USD")
-
-  // Payment
-  paymentStatus   PaymentStatus @default(PENDING)
-  paidAmount      Float       @default(0)
-
-  // Expiry
-  expiryDate      DateTime?
-
-  // Metadata
-  metadata        Json?
-
-  // Soft Delete
-  isActive        Boolean     @default(true)
-  deletedAt       DateTime?
-  cancelledAt     DateTime?
-  cancelledBy     String?
-  cancellationReason String?
-
-  createdAt       DateTime    @default(now())
-  updatedAt       DateTime    @updatedAt
-
-  // Relations
-  organization    Organization @relation(fields: [organizationId], references: [id])
-  user            User        @relation(fields: [userId], references: [id])
-
-  segments        PNRSegment[]
-  passengers      Passenger[]
-  payments        Payment[]
-  seats           Seat[]
-  ancillaries     AncillaryPurchase[]
-  checkIns        CheckIn[]
-  notifications   Notification[]
-  bookingAnalytics BookingAnalytic[]
-
-  @@index([organizationId])
-  @@index([userId])
-  @@index([pnr])
-  @@index([status])
-  @@index([paymentStatus])
-  @@index([isActive])
-  @@index([createdAt])
-  @@map("pnrs")
-}
-
-model PNRSegment {
-  id              String      @id @default(uuid())
-  pnrId           String
-  flightId        String
-  fareId          String?
-
-  segmentNumber   Int         // sequence in itinerary
-
-  // Flight Info (denormalized for performance)
-  flightNumber    String
-  departureAirport String
-  arrivalAirport  String
-  departureDate   DateTime
-  arrivalDate     DateTime
-
-  cabinClass      CabinClass
-  bookingClass    BookingClass
-  fareBasis       String?
-
-  // Status
-  status          String      @default("CONFIRMED") // CONFIRMED, WAITLIST, CANCELLED
-
-  // Pricing
-  baseAmount      Float
-  taxAmount       Float
-  totalAmount     Float
-  currency        String      @default("USD")
-
-  createdAt       DateTime    @default(now())
-  updatedAt       DateTime    @updatedAt
-
-  // Relations
-  pnr             PNR         @relation(fields: [pnrId], references: [id], onDelete: Cascade)
-  flight          Flight      @relation(fields: [flightId], references: [id])
-  fare            Fare?       @relation(fields: [fareId], references: [id])
-
-  @@index([pnrId])
-  @@index([flightId])
-  @@index([fareId])
-  @@index([departureDate])
-  @@map("pnr_segments")
-}
-
-model Passenger {
-  id              String      @id @default(uuid())
-  pnrId           String
-
-  // Personal Info
-  type            PassengerType @default(ADULT)
-  title           String?
-  firstName       String
-  lastName        String
-  middleName      String?
-  gender          GenderType?
-  dateOfBirth     DateTime?
-
-  // Contact
-  email           String?
-  phoneNumber     String?
-
-  // Travel Document
-  documentType    DocumentType?
-  documentNumber  String?
-  documentIssueCountry String?
-  documentExpiry  DateTime?
-  nationality     String?
-
-  // Frequent Flyer
-  frequentFlyerNumber String?
-  frequentFlyerTier   String?
-
-  // Special Services
-  specialMeals    String[]
-  specialRequests String[]
-  wheelchairRequired Boolean   @default(false)
-  medicalInfo     String?
-
-  // Check-in & Boarding
-  seatAssignment  String?
-  boardingPass    String?
-
-  // Metadata
-  metadata        Json?
-
-  createdAt       DateTime    @default(now())
-  updatedAt       DateTime    @updatedAt
-
-  // Relations
-  pnr             PNR         @relation(fields: [pnrId], references: [id], onDelete: Cascade)
-  seats           Seat[]
-  ancillaries     AncillaryPurchase[]
-  checkIns        CheckIn[]
-  boardingRecords BoardingRecord[]
-  baggage         Baggage[]
-
-  @@index([pnrId])
-  @@index([lastName, firstName])
-  @@index([email])
-  @@index([frequentFlyerNumber])
-  @@map("passengers")
-}
-
-// ============================================================================
-// OPERATIONAL TABLES
-// ============================================================================
-
-model CheckIn {
-  id              String        @id @default(uuid())
-  pnrId           String
-  passengerId     String
-  userId          String?
-
-  flightId        String
-
-  // Check-in Details
-  channel         String        // WEB, MOBILE, KIOSK, COUNTER, API
-  counter         String?
-  agent           String?
-
-  // Seat
-  seatNumber      String?
-  seatChanged     Boolean       @default(false)
-  previousSeat    String?
-
-  // Baggage
-  baggageCount    Int           @default(0)
-  baggageWeight   Float?
-
-  // Status
-  status          CheckInStatus @default(COMPLETED)
-
-  // Boarding Pass
-  boardingPassNumber String?
-  boardingGroup   String?
-  sequenceNumber  Int?
-
-  checkInTime     DateTime      @default(now())
-
-  // Metadata
-  metadata        Json?
-
-  createdAt       DateTime      @default(now())
-  updatedAt       DateTime      @updatedAt
-
-  // Relations
-  pnr             PNR           @relation(fields: [pnrId], references: [id])
-  passenger       Passenger     @relation(fields: [passengerId], references: [id])
-  user            User?         @relation(fields: [userId], references: [id])
-
-  @@index([pnrId])
-  @@index([passengerId])
-  @@index([flightId])
-  @@index([checkInTime])
-  @@map("check_ins")
-}
-
-model BoardingRecord {
-  id              String         @id @default(uuid())
-  passengerId     String
-  flightId        String
-
-  // Boarding Details
-  boardingTime    DateTime?
-  gate            String?
-  boardedBy       String?       // Agent/System
-
-  status          BoardingStatus @default(NOT_BOARDED)
-
-  // Metadata
-  metadata        Json?
-
-  createdAt       DateTime       @default(now())
-  updatedAt       DateTime       @updatedAt
-
-  // Relations
-  passenger       Passenger      @relation(fields: [passengerId], references: [id])
-
-  @@index([passengerId])
-  @@index([flightId])
-  @@index([boardingTime])
-  @@index([status])
-  @@map("boarding_records")
-}
-
-model Baggage {
-  id              String         @id @default(uuid())
-  passengerId     String
-  flightId        String
-  pnrId           String
-
-  // Bag Details
-  tagNumber       String         @unique
-  weight          Float
-  pieces          Int            @default(1)
-
-  // Routing
-  origin          String
-  destination     String
-  currentLocation String?
-
-  // Status
-  status          BaggageStatus  @default(CHECKED_IN)
-
-  // Special Handling
-  isFragile       Boolean        @default(false)
-  isPriority      Boolean        @default(false)
-  specialHandling String?
-
-  // Tracking
-  checkedInAt     DateTime?
-  loadedAt        DateTime?
-  arrivedAt       DateTime?
-  deliveredAt     DateTime?
-
-  // Incidents
-  isLost          Boolean        @default(false)
-  isDamaged       Boolean        @default(false)
-  incidentReport  String?
-
-  // Metadata
-  metadata        Json?
-
-  createdAt       DateTime       @default(now())
-  updatedAt       DateTime       @updatedAt
-
-  // Relations
-  passenger       Passenger      @relation(fields: [passengerId], references: [id])
-
-  @@index([passengerId])
-  @@index([flightId])
-  @@index([pnrId])
-  @@index([tagNumber])
-  @@index([status])
-  @@map("baggage")
-}
-
-model LoadControl {
-  id              String    @id @default(uuid())
-  flightId        String    @unique
-
-  // Weight & Balance
-  totalPassengers Int
-  totalBaggage    Int
-  totalCargo      Int       @default(0)
-  totalFuel       Float
-
-  actualWeight    Float
-  maximumWeight   Float
-
-  // Center of Gravity
-  centerOfGravity Float?
-
-  // Load Distribution
-  forwardHold     Float     @default(0)
-  aftHold         Float     @default(0)
-
-  // Fuel
-  fuelOnBoard     Float
-  fuelRequired    Float
-
-  // Status
-  isFinalized     Boolean   @default(false)
-  finalizedBy     String?
-  finalizedAt     DateTime?
-
-  // Metadata
-  metadata        Json?
-
-  createdAt       DateTime  @default(now())
-  updatedAt       DateTime  @updatedAt
-
-  // Relations
-  flight          Flight    @relation(fields: [flightId], references: [id])
-
-  @@index([flightId])
-  @@index([isFinalized])
-  @@map("load_control")
-}
-
-model FlightOperation {
-  id              String       @id @default(uuid())
-  flightId        String
-
-  // Operational Events
-  eventType       String       // GATE_OPEN, BOARDING_START, DOOR_CLOSE, etc.
-  eventTime       DateTime
-  eventBy         String?
-
-  // Details
-  details         Json?
-
-  // Delays
-  delayCode       String?
-  delayMinutes    Int?
-  delayReason     String?
-
-  createdAt       DateTime     @default(now())
-
-  // Relations
-  flight          Flight       @relation(fields: [flightId], references: [id])
-
-  @@index([flightId])
-  @@index([eventType])
-  @@index([eventTime])
-  @@map("flight_operations")
-}
-
-// ============================================================================
-// FINANCIAL TABLES
-// ============================================================================
-
-model Payment {
-  id              String         @id @default(uuid())
-  pnrId           String
-  userId          String
-
-  // Amount
-  amount          Float
-  currency        String         @default("USD")
-
-  // Payment Method
-  method          PaymentMethod
-  gateway         PaymentGateway?
-
-  // Transaction Details
-  transactionId   String?        @unique
-  gatewayTransactionId String?
-  authorizationCode String?
-
-  // Card Details (tokenized)
-  cardLast4       String?
-  cardBrand       String?
-  cardToken       String?
-
-  // Status
-  status          PaymentStatus  @default(PENDING)
-
-  // Timestamps
-  authorizedAt    DateTime?
-  capturedAt      DateTime?
-  failedAt        DateTime?
-  refundedAt      DateTime?
-
-  // Gateway Response
-  gatewayResponse Json?
-
-  // Error Details
-  errorCode       String?
-  errorMessage    String?
-
-  // Metadata
-  metadata        Json?
-  ipAddress       String?
-
-  createdAt       DateTime       @default(now())
-  updatedAt       DateTime       @updatedAt
-
-  // Relations
-  pnr             PNR            @relation(fields: [pnrId], references: [id])
-  user            User           @relation(fields: [userId], references: [id])
-  refunds         Refund[]
-  revenueRecords  RevenueAccounting[]
-
-  @@index([pnrId])
-  @@index([userId])
-  @@index([transactionId])
-  @@index([status])
-  @@index([createdAt])
-  @@map("payments")
-}
-
-model Refund {
-  id              String        @id @default(uuid())
-  paymentId       String
-  pnrId           String
-
-  // Amount
-  amount          Float
-  currency        String        @default("USD")
-
-  // Reason
-  reason          String
-  reasonCode      String?
-
-  // Status
-  status          String        @default("PENDING") // PENDING, PROCESSING, COMPLETED, FAILED
-
-  // Processing
-  processedBy     String?
-  processedAt     DateTime?
-
-  // Gateway
-  refundTransactionId String?
-  gatewayResponse Json?
-
-  // Approval
-  approvedBy      String?
-  approvedAt      DateTime?
-
-  // Metadata
-  metadata        Json?
-
-  createdAt       DateTime      @default(now())
-  updatedAt       DateTime      @updatedAt
-
-  // Relations
-  payment         Payment       @relation(fields: [paymentId], references: [id])
-
-  @@index([paymentId])
-  @@index([pnrId])
-  @@index([status])
-  @@index([createdAt])
-  @@map("refunds")
-}
-
-model RevenueAccounting {
-  id              String          @id @default(uuid())
-  paymentId       String
-  pnrId           String
-
-  // Transaction
-  transactionType TransactionType
-  transactionDate DateTime
-
-  // Amounts
-  grossAmount     Float
-  netAmount       Float
-  taxAmount       Float
-  commissionAmount Float          @default(0)
-  feeAmount       Float          @default(0)
-
-  currency        String          @default("USD")
-
-  // Accounting Period
-  accountingPeriod String         // YYYY-MM
-  fiscalYear      Int
-  fiscalQuarter   Int
-
-  // Status
-  isReconciled    Boolean         @default(false)
-  reconciledAt    DateTime?
-  reconciledBy    String?
-
-  // Metadata
-  metadata        Json?
-
-  createdAt       DateTime        @default(now())
-  updatedAt       DateTime        @updatedAt
-
-  // Relations
-  payment         Payment         @relation(fields: [paymentId], references: [id])
-
-  @@index([paymentId])
-  @@index([pnrId])
-  @@index([transactionType])
-  @@index([accountingPeriod])
-  @@index([isReconciled])
-  @@map("revenue_accounting")
-}
-
-model Commission {
-  id              String    @id @default(uuid())
-  pnrId           String
-
-  // Agent/Partner
-  agentId         String
-  agentType       String    // TRAVEL_AGENT, OTA, CORPORATE, etc.
-
-  // Commission
-  baseAmount      Float
-  commissionRate  Float     // percentage
-  commissionAmount Float
-  currency        String    @default("USD")
-
-  // Payment
-  isPaid          Boolean   @default(false)
-  paidAt          DateTime?
-  paidBy          String?
-
-  // Period
-  periodStart     DateTime
-  periodEnd       DateTime
-
-  // Metadata
-  metadata        Json?
-
-  createdAt       DateTime  @default(now())
-  updatedAt       DateTime  @updatedAt
-
-  @@index([pnrId])
-  @@index([agentId])
-  @@index([isPaid])
-  @@index([periodStart, periodEnd])
-  @@map("commissions")
-}
-
-// ============================================================================
-// NOTIFICATIONS
-// ============================================================================
-
-model Notification {
-  id              String              @id @default(uuid())
-  userId          String
-  pnrId           String?
-
-  type            NotificationType
-  channel         String              // specific channel used
-
-  // Recipient
-  recipient       String              // email/phone based on type
-
-  // Content
-  subject         String?
-  body            String              @db.Text
-  template        String?
-  templateData    Json?
-
-  // Status
-  status          NotificationStatus  @default(PENDING)
-
-  // Delivery
-  sentAt          DateTime?
-  deliveredAt     DateTime?
-  readAt          DateTime?
-
-  // Errors
-  failureReason   String?
-  retryCount      Int                 @default(0)
-  maxRetries      Int                 @default(3)
-
-  // External IDs
-  externalId      String?             // Provider message ID
-
-  // Metadata
-  metadata        Json?
-
-  createdAt       DateTime            @default(now())
-  updatedAt       DateTime            @updatedAt
-
-  // Relations
-  user            User                @relation(fields: [userId], references: [id])
-  pnr             PNR?                @relation(fields: [pnrId], references: [id])
-
-  @@index([userId])
-  @@index([pnrId])
-  @@index([type])
-  @@index([status])
-  @@index([sentAt])
-  @@map("notifications")
+enum AuditAction {
+  CREATE
+  READ
+  UPDATE
+  DELETE
+  LOGIN
+  LOGOUT
+  LOGIN_FAILED
+  PASSWORD_CHANGE
+  PERMISSION_CHANGE
+  EXPORT
+  IMPORT
 }
 
 // ============================================================================
@@ -1391,162 +1683,193 @@ model Notification {
 // ============================================================================
 
 model CustomerSegment {
-  id              String    @id @default(uuid())
-  userId          String
+  id                    String                  @id @default(uuid())
+  organizationId        String
+  
+  // Segment details
+  name                  String
+  description           String?
+  
+  // Criteria
+  criteria              Json                    // Segmentation rules
+  
+  // Status
+  isActive              Boolean                 @default(true)
+  
+  // Stats
+  customerCount         Int                     @default(0)
+  lastCalculated        DateTime?
+  
+  createdAt             DateTime                @default(now())
+  updatedAt             DateTime                @updatedAt
 
-  segmentName     String    // VIP, FREQUENT_FLYER, PRICE_SENSITIVE, etc.
-  segmentType     String    // BEHAVIORAL, DEMOGRAPHIC, VALUE
-
-  // Attributes
-  attributes      Json
-
-  // Scores
-  lifetimeValue   Float?
-  churnRisk       Float?
-  engagementScore Float?
-
-  // Dates
-  assignedAt      DateTime  @default(now())
-  expiresAt       DateTime?
-
-  isActive        Boolean   @default(true)
-
-  createdAt       DateTime  @default(now())
-  updatedAt       DateTime  @updatedAt
-
-  // Relations
-  user            User      @relation(fields: [userId], references: [id])
-
-  @@index([userId])
-  @@index([segmentName])
+  @@index([organizationId])
   @@index([isActive])
   @@map("customer_segments")
 }
 
-model BookingAnalytic {
-  id              String    @id @default(uuid())
-  pnrId           String
+model BookingAnalytics {
+  id                    String                  @id @default(uuid())
+  organizationId        String
+  
+  // Time period
+  analyticsDate         DateTime
+  period                AnalyticsPeriod         @default(DAY)
+  
+  // Booking metrics
+  totalBookings         Int                     @default(0)
+  totalPassengers       Int                     @default(0)
+  totalRevenue          Decimal                 @default(0) @db.Decimal(12, 2)
+  
+  // Channel breakdown
+  webBookings           Int                     @default(0)
+  mobileBookings        Int                     @default(0)
+  agentBookings         Int                     @default(0)
+  apiBookings           Int                     @default(0)
+  
+  // Conversion
+  searchCount           Int                     @default(0)
+  conversionRate        Decimal?                @db.Decimal(5, 2)
+  
+  // Average values
+  avgBookingValue       Decimal?                @db.Decimal(10, 2)
+  avgPassengersPerBooking Decimal?              @db.Decimal(4, 2)
+  
+  // Ancillary
+  ancillaryRevenue      Decimal                 @default(0) @db.Decimal(12, 2)
+  ancillaryAttachRate   Decimal?                @db.Decimal(5, 2)
+  
+  currency              String                  @default("USD")
+  
+  createdAt             DateTime                @default(now())
+  updatedAt             DateTime                @updatedAt
 
-  // Funnel Analytics
-  sessionId       String?
-  searchCount     Int?
-  pageViews       Int?
-  timeToBook      Int?      // seconds
-
-  // Attribution
-  utmSource       String?
-  utmMedium       String?
-  utmCampaign     String?
-  referrer        String?
-
-  // Device & Browser
-  device          String?
-  browser         String?
-  os              String?
-
-  // Geography
-  country         String?
-  city            String?
-  ipAddress       String?
-
-  // Booking Characteristics
-  advancePurchaseDays Int?
-  isRoundTrip     Boolean   @default(false)
-  passengerCount  Int
-
-  // Revenue
-  totalRevenue    Float
-  averagePerPax   Float
-
-  // Metadata
-  metadata        Json?
-
-  createdAt       DateTime  @default(now())
-
-  // Relations
-  pnr             PNR       @relation(fields: [pnrId], references: [id])
-
-  @@index([pnrId])
-  @@index([sessionId])
-  @@index([utmCampaign])
-  @@index([createdAt])
+  @@unique([organizationId, analyticsDate, period])
+  @@index([organizationId])
+  @@index([analyticsDate])
   @@map("booking_analytics")
 }
 
-model Campaign {
-  id              String    @id @default(uuid())
-  organizationId  String
-
-  name            String
-  description     String?
-  type            String    // PROMOTIONAL, SEASONAL, TARGETED, etc.
-
-  // Campaign Details
-  discountType    String?   // PERCENTAGE, FIXED, BOGO
-  discountValue   Float?
-
-  // Targeting
-  targetSegments  String[]
-  targetRoutes    String[]
-
-  // Validity
-  startDate       DateTime
-  endDate         DateTime
-
-  // Budget
-  budget          Float?
-  spent           Float     @default(0)
-
-  // Performance
-  impressions     Int       @default(0)
-  clicks          Int       @default(0)
-  conversions     Int       @default(0)
-  revenue         Float     @default(0)
-
-  // Status
-  isActive        Boolean   @default(true)
-
-  // Metadata
-  metadata        Json?
-
-  createdAt       DateTime  @default(now())
-  updatedAt       DateTime  @updatedAt
-
-  // Relations
-  organization    Organization @relation(fields: [organizationId], references: [id])
-
-  @@index([organizationId])
-  @@index([isActive])
-  @@index([startDate, endDate])
-  @@map("campaigns")
+enum AnalyticsPeriod {
+  HOUR
+  DAY
+  WEEK
+  MONTH
+  QUARTER
+  YEAR
 }
 
 model PerformanceMetric {
-  id              String    @id @default(uuid())
-
-  metricType      String    // FLIGHT_OTP, LOAD_FACTOR, REVENUE, etc.
-  metricName      String
-
-  // Dimensions
-  flightId        String?
-  routeCode       String?
-  date            DateTime
-
-  // Value
-  value           Float
-  target          Float?
-
-  // Aggregation
-  aggregationLevel String   // DAILY, WEEKLY, MONTHLY
-
+  id                    String                  @id @default(uuid())
+  organizationId        String
+  
+  // Metric details
+  metricName            String
+  metricType            MetricType
+  metricValue           Decimal                 @db.Decimal(12, 4)
+  unit                  String?
+  
+  // Context
+  flightId              String?
+  route                 String?                 // Origin-Destination pair
+  
+  // Time
+  measurementDate       DateTime
+  period                AnalyticsPeriod         @default(DAY)
+  
   // Metadata
-  metadata        Json?
+  metadata              Json?
+  createdAt             DateTime                @default(now())
 
-  createdAt       DateTime  @default(now())
-
-  @@index([metricType])
-  @@index([flightId])
-  @@index([routeCode])
-  @@index([date])
+  @@index([organizationId])
+  @@index([metricName])
+  @@index([measurementDate])
   @@map("performance_metrics")
+}
+
+enum MetricType {
+  LOAD_FACTOR
+  REVENUE_PER_SEAT
+  ON_TIME_PERFORMANCE
+  CANCELLATION_RATE
+  CUSTOMER_SATISFACTION
+  ANCILLARY_REVENUE_PER_PASSENGER
+  AVERAGE_FARE
+  BOOKING_CONVERSION_RATE
+}
+
+model Campaign {
+  id                    String                  @id @default(uuid())
+  organizationId        String
+  
+  // Campaign details
+  name                  String
+  code                  String                  @unique
+  description           String?
+  campaignType          CampaignType
+  
+  // Dates
+  startDate             DateTime
+  endDate               DateTime
+  
+  // Targeting
+  targetSegments        Json?                   // Array of segment IDs
+  targetRoutes          Json?                   // Array of route codes
+  
+  // Discount/Offer
+  discountType          DiscountType?
+  discountValue         Decimal?                @db.Decimal(10, 2)
+  discountPercentage    Decimal?                @db.Decimal(5, 2)
+  
+  // Budget
+  budget                Decimal?                @db.Decimal(12, 2)
+  spent                 Decimal                 @default(0) @db.Decimal(12, 2)
+  
+  // Performance
+  bookingCount          Int                     @default(0)
+  revenueGenerated      Decimal                 @default(0) @db.Decimal(12, 2)
+  
+  // Status
+  status                CampaignStatus          @default(DRAFT)
+  
+  // Metadata
+  metadata              Json?
+  createdAt             DateTime                @default(now())
+  updatedAt             DateTime                @updatedAt
+  deletedAt             DateTime?
+
+  // Relationships
+  organization          Organization            @relation(fields: [organizationId], references: [id])
+  
+  @@index([organizationId])
+  @@index([code])
+  @@index([status])
+  @@index([startDate, endDate])
+  @@index([deletedAt])
+  @@map("campaigns")
+}
+
+enum CampaignType {
+  PROMOTIONAL
+  SEASONAL
+  FLASH_SALE
+  LOYALTY
+  REMARKETING
+  REFERRAL
+}
+
+enum DiscountType {
+  FIXED_AMOUNT
+  PERCENTAGE
+  BUY_ONE_GET_ONE
+  FREE_ANCILLARY
+}
+
+enum CampaignStatus {
+  DRAFT
+  SCHEDULED
+  ACTIVE
+  PAUSED
+  COMPLETED
+  CANCELLED
 }
