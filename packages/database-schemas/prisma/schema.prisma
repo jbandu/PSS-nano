@@ -8,7 +8,12 @@ datasource db {
   url      = env("DATABASE_URL")
 }
 
+// ============================================================================
+// ENUMS
+// ============================================================================
+
 enum UserRole {
+  SUPER_ADMIN
   ADMIN
   AGENT
   CUSTOMER
@@ -19,6 +24,7 @@ enum Status {
   ACTIVE
   INACTIVE
   PENDING
+  SUSPENDED
   DELETED
 }
 
@@ -28,8 +34,10 @@ enum FlightStatus {
   DEPARTED
   IN_FLIGHT
   LANDED
+  ARRIVED
   CANCELLED
   DELAYED
+  DIVERTED
 }
 
 enum CabinClass {
@@ -39,21 +47,37 @@ enum CabinClass {
   FIRST
 }
 
-enum ReservationStatus {
+enum BookingClass {
+  Y // Economy Full Fare
+  M // Economy Discounted
+  B // Business Full Fare
+  J // Business Discounted
+  F // First Class
+  C // Business
+}
+
+enum PNRStatus {
   PENDING
   CONFIRMED
+  TICKETED
+  CHECKED_IN
+  BOARDED
+  FLOWN
   CANCELLED
-  COMPLETED
+  NO_SHOW
   EXPIRED
 }
 
 enum PaymentStatus {
   PENDING
-  PROCESSING
+  AUTHORIZED
+  CAPTURED
   COMPLETED
   FAILED
   REFUNDED
+  PARTIALLY_REFUNDED
   CANCELLED
+  CHARGEBACK
 }
 
 enum PaymentMethod {
@@ -61,6 +85,17 @@ enum PaymentMethod {
   DEBIT_CARD
   PAYPAL
   BANK_TRANSFER
+  WALLET
+  VOUCHER
+  POINTS
+}
+
+enum PaymentGateway {
+  STRIPE
+  PAYPAL
+  SQUARE
+  ADYEN
+  BRAINTREE
 }
 
 enum NotificationType {
@@ -68,199 +103,1450 @@ enum NotificationType {
   SMS
   PUSH
   IN_APP
+  WHATSAPP
 }
 
 enum NotificationStatus {
   PENDING
+  QUEUED
   SENT
-  FAILED
   DELIVERED
+  FAILED
+  BOUNCED
 }
 
-enum NotificationTemplate {
-  BOOKING_CONFIRMATION
-  PAYMENT_CONFIRMATION
-  FLIGHT_REMINDER
-  FLIGHT_CANCELLATION
-  FLIGHT_DELAY
-  CHECK_IN_REMINDER
-  BOARDING_PASS
+enum CheckInStatus {
+  NOT_STARTED
+  IN_PROGRESS
+  COMPLETED
+  FAILED
 }
+
+enum BoardingStatus {
+  NOT_BOARDED
+  BOARDING
+  BOARDED
+  GATE_CLOSED
+  NO_SHOW
+}
+
+enum BaggageStatus {
+  CHECKED_IN
+  LOADED
+  IN_TRANSIT
+  ARRIVED
+  DELIVERED
+  LOST
+  DELAYED
+  DAMAGED
+}
+
+enum TransactionType {
+  BOOKING
+  CANCELLATION
+  REFUND
+  ANCILLARY
+  SEAT_SELECTION
+  UPGRADE
+  CHANGE_FEE
+  NO_SHOW_FEE
+}
+
+enum FareType {
+  PUBLISHED
+  PRIVATE
+  PROMOTIONAL
+  CORPORATE
+  GROUP
+  STAFF
+}
+
+enum AncillaryType {
+  BAGGAGE
+  SEAT_SELECTION
+  MEAL
+  LOUNGE
+  PRIORITY_BOARDING
+  EXTRA_LEGROOM
+  WIFI
+  INSURANCE
+  PET
+  SPORTS_EQUIPMENT
+}
+
+enum GenderType {
+  MALE
+  FEMALE
+  OTHER
+  PREFER_NOT_TO_SAY
+}
+
+enum PassengerType {
+  ADULT
+  CHILD
+  INFANT
+  SENIOR
+  STUDENT
+}
+
+enum DocumentType {
+  PASSPORT
+  NATIONAL_ID
+  DRIVERS_LICENSE
+  BIRTH_CERTIFICATE
+}
+
+enum AuditAction {
+  CREATE
+  UPDATE
+  DELETE
+  LOGIN
+  LOGOUT
+  VIEW
+  EXPORT
+  IMPORT
+}
+
+// ============================================================================
+// MULTI-TENANT & ORGANIZATION
+// ============================================================================
+
+model Organization {
+  id          String   @id @default(uuid())
+  code        String   @unique // IATA airline code
+  name        String
+  legalName   String
+  country     String
+  headquarters String?
+  logo        String?
+  website     String?
+  contactEmail String
+  contactPhone String?
+
+  // Settings
+  settings    Json? // timezone, currency, language, etc.
+  features    Json? // enabled features
+
+  // Status
+  status      Status   @default(ACTIVE)
+  isActive    Boolean  @default(true)
+  deletedAt   DateTime?
+
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  // Relations
+  users       User[]
+  flights     Flight[]
+  fares       Fare[]
+  ancillaries AncillaryProduct[]
+  pnrs        PNR[]
+  apiKeys     ApiKey[]
+  campaigns   Campaign[]
+
+  @@index([code])
+  @@index([status])
+  @@index([isActive])
+  @@map("organizations")
+}
+
+// ============================================================================
+// USER & ACCESS MANAGEMENT
+// ============================================================================
 
 model User {
-  id            String         @id @default(uuid())
-  email         String         @unique
-  password      String
-  firstName     String
-  lastName      String
-  role          UserRole       @default(CUSTOMER)
-  status        Status         @default(ACTIVE)
-  emailVerified Boolean        @default(false)
-  phoneNumber   String?
-  createdAt     DateTime       @default(now())
-  updatedAt     DateTime       @updatedAt
+  id              String    @id @default(uuid())
+  organizationId  String
+  email           String    @unique
+  password        String
 
-  reservations  Reservation[]
-  payments      Payment[]
-  notifications Notification[]
+  // Profile
+  firstName       String
+  lastName        String
+  middleName      String?
+  gender          GenderType?
+  dateOfBirth     DateTime?
+  phoneNumber     String?
+  profilePhoto    String?
 
+  // Authentication
+  emailVerified   Boolean   @default(false)
+  phoneVerified   Boolean   @default(false)
+  twoFactorEnabled Boolean  @default(false)
+  lastLoginAt     DateTime?
+  lastLoginIp     String?
+
+  // Role & Permissions
+  role            UserRole  @default(CUSTOMER)
+  status          Status    @default(ACTIVE)
+
+  // Soft Delete
+  isActive        Boolean   @default(true)
+  deletedAt       DateTime?
+
+  // Preferences
+  preferences     Json? // language, currency, notifications
+
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+
+  // Relations
+  organization    Organization @relation(fields: [organizationId], references: [id])
+  roles           UserRoleAssignment[]
+  pnrs            PNR[]
+  payments        Payment[]
+  notifications   Notification[]
+  checkIns        CheckIn[]
+  auditLogs       AuditLog[]
+  apiKeys         ApiKey[]
+  segments        CustomerSegment[]
+
+  @@index([organizationId])
   @@index([email])
   @@index([status])
+  @@index([role])
+  @@index([isActive])
+  @@index([lastLoginAt])
   @@map("users")
 }
 
-model Flight {
-  id                  String        @id @default(uuid())
-  flightNumber        String
-  airlineCode         String
-  departureAirport    String
-  arrivalAirport      String
-  scheduledDeparture  DateTime
-  scheduledArrival    DateTime
-  actualDeparture     DateTime?
-  actualArrival       DateTime?
-  status              FlightStatus  @default(SCHEDULED)
-  aircraftType        String
-  capacity            Int
-  availableSeats      Int
-  createdAt           DateTime      @default(now())
-  updatedAt           DateTime      @updatedAt
+model Role {
+  id          String   @id @default(uuid())
+  name        String   @unique
+  description String?
 
-  reservations        Reservation[]
-  inventories         Inventory[]
-  seats               Seat[]
+  // Permissions as JSON array
+  permissions Json
 
-  @@index([flightNumber])
-  @@index([departureAirport, arrivalAirport])
-  @@index([scheduledDeparture])
-  @@index([status])
-  @@map("flights")
+  isSystem    Boolean  @default(false)
+  isActive    Boolean  @default(true)
+
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  // Relations
+  userRoles   UserRoleAssignment[]
+
+  @@index([name])
+  @@index([isActive])
+  @@map("roles")
 }
 
-model Seat {
+model UserRoleAssignment {
+  id        String   @id @default(uuid())
+  userId    String
+  roleId    String
+
+  grantedBy String?
+  grantedAt DateTime @default(now())
+  expiresAt DateTime?
+
+  isActive  Boolean  @default(true)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  // Relations
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  role      Role     @relation(fields: [roleId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, roleId])
+  @@index([userId])
+  @@index([roleId])
+  @@index([isActive])
+  @@map("user_role_assignments")
+}
+
+model ApiKey {
+  id              String   @id @default(uuid())
+  organizationId  String
+  userId          String?
+
+  name            String
+  key             String   @unique
+  secret          String
+
+  // Permissions
+  scopes          String[] // read:flights, write:bookings, etc.
+
+  // Usage
+  lastUsedAt      DateTime?
+  usageCount      Int       @default(0)
+  rateLimit       Int?      @default(1000) // per hour
+
+  // Expiry
+  expiresAt       DateTime?
+
+  isActive        Boolean   @default(true)
+  deletedAt       DateTime?
+
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+
+  // Relations
+  organization    Organization @relation(fields: [organizationId], references: [id])
+  user            User?     @relation(fields: [userId], references: [id])
+
+  @@index([organizationId])
+  @@index([userId])
+  @@index([key])
+  @@index([isActive])
+  @@map("api_keys")
+}
+
+model AuditLog {
   id              String      @id @default(uuid())
-  flightId        String
-  seatNumber      String
-  cabinClass      CabinClass
-  isAvailable     Boolean     @default(true)
-  price           Float?
-  isEmergencyExit Boolean     @default(false)
+  userId          String?
+
+  action          AuditAction
+  entity          String      // table name
+  entityId        String      // record id
+
+  changes         Json?       // before/after values
+  metadata        Json?       // request info, IP, etc.
+
+  ipAddress       String?
+  userAgent       String?
+
   createdAt       DateTime    @default(now())
-  updatedAt       DateTime    @updatedAt
 
-  flight          Flight      @relation(fields: [flightId], references: [id], onDelete: Cascade)
+  // Relations
+  user            User?       @relation(fields: [userId], references: [id])
 
-  @@unique([flightId, seatNumber])
-  @@index([flightId, isAvailable])
-  @@map("seats")
+  @@index([userId])
+  @@index([entity, entityId])
+  @@index([action])
+  @@index([createdAt])
+  @@map("audit_logs")
+}
+
+// ============================================================================
+// CORE ENTITIES - FLIGHTS & INVENTORY
+// ============================================================================
+
+model Airport {
+  id          String   @id @default(uuid())
+  code        String   @unique // IATA code
+  name        String
+  city        String
+  country     String
+  timezone    String
+  latitude    Float?
+  longitude   Float?
+
+  isActive    Boolean  @default(true)
+
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  // Relations
+  departureFlights Flight[] @relation("DepartureAirport")
+  arrivalFlights   Flight[] @relation("ArrivalAirport")
+
+  @@index([code])
+  @@index([country])
+  @@map("airports")
+}
+
+model Aircraft {
+  id              String   @id @default(uuid())
+  registration    String   @unique
+  type            String   // B737, A320, etc.
+  manufacturer    String
+  model           String
+
+  // Configuration
+  totalSeats      Int
+  configuration   Json     // cabin layout
+
+  isActive        Boolean  @default(true)
+  deletedAt       DateTime?
+
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  // Relations
+  flights         Flight[]
+
+  @@index([registration])
+  @@index([type])
+  @@index([isActive])
+  @@map("aircraft")
+}
+
+model Flight {
+  id                String       @id @default(uuid())
+  organizationId    String
+
+  flightNumber      String
+  operatingCarrier  String       // Airline code operating the flight
+  marketingCarrier  String?      // Airline code marketing the flight (for codeshare)
+
+  // Aircraft
+  aircraftId        String?
+  aircraftType      String
+
+  // Route
+  departureAirportId String
+  arrivalAirportId   String
+
+  // Schedule
+  scheduledDeparture DateTime
+  scheduledArrival   DateTime
+  actualDeparture    DateTime?
+  actualArrival      DateTime?
+
+  // Terminal & Gate
+  departureTerminal  String?
+  departureGate      String?
+  arrivalTerminal    String?
+  arrivalGate        String?
+
+  // Status
+  status            FlightStatus @default(SCHEDULED)
+
+  // Capacity
+  totalSeats        Int
+  availableSeats    Int
+
+  // Recurrence (for regular flights)
+  daysOfWeek        Int[]        // 0=Sunday, 6=Saturday
+  effectiveFrom     DateTime
+  effectiveTo       DateTime
+
+  // Operational
+  loadFactor        Float?       @default(0)
+  onTimePerformance Float?
+
+  isActive          Boolean      @default(true)
+  deletedAt         DateTime?
+
+  createdAt         DateTime     @default(now())
+  updatedAt         DateTime     @updatedAt
+
+  // Relations
+  organization      Organization @relation(fields: [organizationId], references: [id])
+  aircraft          Aircraft?    @relation(fields: [aircraftId], references: [id])
+  departureAirport  Airport      @relation("DepartureAirport", fields: [departureAirportId], references: [id])
+  arrivalAirport    Airport      @relation("ArrivalAirport", fields: [arrivalAirportId], references: [id])
+
+  inventories       Inventory[]
+  seats             Seat[]
+  pnrs              PNR[]
+  fares             Fare[]
+  loadControl       LoadControl?
+  flightOperations  FlightOperation[]
+
+  @@index([organizationId])
+  @@index([flightNumber])
+  @@index([departureAirportId, arrivalAirportId])
+  @@index([scheduledDeparture])
+  @@index([status])
+  @@index([isActive])
+  @@map("flights")
 }
 
 model Inventory {
   id              String      @id @default(uuid())
   flightId        String
   cabinClass      CabinClass
+  bookingClass    BookingClass
+
   totalSeats      Int
   availableSeats  Int
   bookedSeats     Int         @default(0)
   blockedSeats    Int         @default(0)
+
+  // Revenue Management
+  authorizedSeats Int
+  oversoldSeats   Int         @default(0)
+
+  isActive        Boolean     @default(true)
+
   createdAt       DateTime    @default(now())
   updatedAt       DateTime    @updatedAt
 
+  // Relations
   flight          Flight      @relation(fields: [flightId], references: [id], onDelete: Cascade)
 
-  @@unique([flightId, cabinClass])
+  @@unique([flightId, cabinClass, bookingClass])
   @@index([flightId])
+  @@index([cabinClass])
+  @@index([availableSeats])
   @@map("inventories")
 }
 
+model Seat {
+  id              String      @id @default(uuid())
+  flightId        String
+
+  seatNumber      String      // 12A, 15F, etc.
+  row             Int
+  column          String      // A, B, C, etc.
+
+  cabinClass      CabinClass
+
+  // Characteristics
+  isWindow        Boolean     @default(false)
+  isAisle         Boolean     @default(false)
+  isEmergencyExit Boolean     @default(false)
+  hasExtraLegroom Boolean     @default(false)
+  hasRestrictions Boolean     @default(false)
+  restrictions    String?     // JSON or text
+
+  // Availability
+  isAvailable     Boolean     @default(true)
+  isBlocked       Boolean     @default(false)
+
+  // Pricing
+  basePrice       Float?
+  currentPrice    Float?
+
+  // Assignment
+  passengerId     String?
+  pnrId           String?
+
+  createdAt       DateTime    @default(now())
+  updatedAt       DateTime    @updatedAt
+
+  // Relations
+  flight          Flight      @relation(fields: [flightId], references: [id], onDelete: Cascade)
+  passenger       Passenger?  @relation(fields: [passengerId], references: [id])
+  pnr             PNR?        @relation(fields: [pnrId], references: [id])
+
+  @@unique([flightId, seatNumber])
+  @@index([flightId, isAvailable])
+  @@index([cabinClass])
+  @@index([passengerId])
+  @@index([pnrId])
+  @@map("seats")
+}
+
+// ============================================================================
+// FARES & ANCILLARIES
+// ============================================================================
+
+model Fare {
+  id              String      @id @default(uuid())
+  organizationId  String
+  flightId        String?     // Null for fare rules
+
+  fareClass       String
+  fareType        FareType
+  cabinClass      CabinClass
+  bookingClass    BookingClass
+
+  // Pricing
+  baseAmount      Float
+  currency        String      @default("USD")
+
+  // Taxes & Fees (as JSON for flexibility)
+  taxes           Json?
+
+  // Availability
+  validFrom       DateTime
+  validTo         DateTime
+
+  // Restrictions
+  minStay         Int?        // days
+  maxStay         Int?        // days
+  advancePurchase Int?        // days before departure
+
+  // Change & Cancellation
+  isRefundable    Boolean     @default(false)
+  isChangeable    Boolean     @default(true)
+  changeFee       Float?
+  cancellationFee Float?
+
+  // Baggage
+  baggageAllowance Json?      // checked & carry-on
+
+  // Rules
+  rules           Json?       // complex fare rules
+
+  isActive        Boolean     @default(true)
+  deletedAt       DateTime?
+
+  createdAt       DateTime    @default(now())
+  updatedAt       DateTime    @updatedAt
+
+  // Relations
+  organization    Organization @relation(fields: [organizationId], references: [id])
+  flight          Flight?      @relation(fields: [flightId], references: [id])
+  pnrSegments     PNRSegment[]
+
+  @@index([organizationId])
+  @@index([flightId])
+  @@index([fareClass])
+  @@index([fareType])
+  @@index([validFrom, validTo])
+  @@index([isActive])
+  @@map("fares")
+}
+
+model AncillaryProduct {
+  id              String          @id @default(uuid())
+  organizationId  String
+
+  code            String          @unique
+  name            String
+  description     String?
+  type            AncillaryType
+
+  // Pricing
+  basePrice       Float
+  currency        String          @default("USD")
+
+  // Applicability
+  cabinClasses    CabinClass[]
+  fareBases       String[]        // which fares can purchase this
+
+  // Availability
+  isActive        Boolean         @default(true)
+  availableFrom   DateTime?
+  availableTo     DateTime?
+
+  // Inventory
+  hasInventory    Boolean         @default(false)
+  totalInventory  Int?
+  availableInventory Int?
+
+  // Rules
+  maxQuantity     Int?            @default(1)
+  rules           Json?
+
+  deletedAt       DateTime?
+
+  createdAt       DateTime        @default(now())
+  updatedAt       DateTime        @updatedAt
+
+  // Relations
+  organization    Organization    @relation(fields: [organizationId], references: [id])
+  purchases       AncillaryPurchase[]
+
+  @@index([organizationId])
+  @@index([code])
+  @@index([type])
+  @@index([isActive])
+  @@map("ancillary_products")
+}
+
+model AncillaryPurchase {
+  id              String           @id @default(uuid())
+  pnrId           String
+  passengerId     String?
+  productId       String
+
+  quantity        Int              @default(1)
+  unitPrice       Float
+  totalPrice      Float
+  currency        String           @default("USD")
+
+  // Status
+  status          String           @default("CONFIRMED")
+
+  createdAt       DateTime         @default(now())
+  updatedAt       DateTime         @updatedAt
+
+  // Relations
+  pnr             PNR              @relation(fields: [pnrId], references: [id], onDelete: Cascade)
+  passenger       Passenger?       @relation(fields: [passengerId], references: [id])
+  product         AncillaryProduct @relation(fields: [productId], references: [id])
+
+  @@index([pnrId])
+  @@index([passengerId])
+  @@index([productId])
+  @@map("ancillary_purchases")
+}
+
+// ============================================================================
+// PNR & PASSENGERS
+// ============================================================================
+
+model PNR {
+  id              String      @id @default(uuid())
+  organizationId  String
+  userId          String
+
+  // PNR Details
+  pnr             String      @unique // 6-character alphanumeric
+  locator         String?     // GDS locator if different
+
+  // Status
+  status          PNRStatus   @default(PENDING)
+
+  // Contact
+  contactEmail    String
+  contactPhone    String
+  contactName     String?
+
+  // Booking Details
+  bookingChannel  String?     // WEB, MOBILE, GDS, API, AGENT
+  bookingAgent    String?
+  bookedByUserId  String?
+
+  // Pricing
+  totalAmount     Float
+  baseAmount      Float
+  taxAmount       Float
+  feeAmount       Float       @default(0)
+  currency        String      @default("USD")
+
+  // Payment
+  paymentStatus   PaymentStatus @default(PENDING)
+  paidAmount      Float       @default(0)
+
+  // Expiry
+  expiryDate      DateTime?
+
+  // Metadata
+  metadata        Json?
+
+  // Soft Delete
+  isActive        Boolean     @default(true)
+  deletedAt       DateTime?
+  cancelledAt     DateTime?
+  cancelledBy     String?
+  cancellationReason String?
+
+  createdAt       DateTime    @default(now())
+  updatedAt       DateTime    @updatedAt
+
+  // Relations
+  organization    Organization @relation(fields: [organizationId], references: [id])
+  user            User        @relation(fields: [userId], references: [id])
+
+  segments        PNRSegment[]
+  passengers      Passenger[]
+  payments        Payment[]
+  seats           Seat[]
+  ancillaries     AncillaryPurchase[]
+  checkIns        CheckIn[]
+  notifications   Notification[]
+  bookingAnalytics BookingAnalytic[]
+
+  @@index([organizationId])
+  @@index([userId])
+  @@index([pnr])
+  @@index([status])
+  @@index([paymentStatus])
+  @@index([isActive])
+  @@index([createdAt])
+  @@map("pnrs")
+}
+
+model PNRSegment {
+  id              String      @id @default(uuid())
+  pnrId           String
+  flightId        String
+  fareId          String?
+
+  segmentNumber   Int         // sequence in itinerary
+
+  // Flight Info (denormalized for performance)
+  flightNumber    String
+  departureAirport String
+  arrivalAirport  String
+  departureDate   DateTime
+  arrivalDate     DateTime
+
+  cabinClass      CabinClass
+  bookingClass    BookingClass
+  fareBasis       String?
+
+  // Status
+  status          String      @default("CONFIRMED") // CONFIRMED, WAITLIST, CANCELLED
+
+  // Pricing
+  baseAmount      Float
+  taxAmount       Float
+  totalAmount     Float
+  currency        String      @default("USD")
+
+  createdAt       DateTime    @default(now())
+  updatedAt       DateTime    @updatedAt
+
+  // Relations
+  pnr             PNR         @relation(fields: [pnrId], references: [id], onDelete: Cascade)
+  flight          Flight      @relation(fields: [flightId], references: [id])
+  fare            Fare?       @relation(fields: [fareId], references: [id])
+
+  @@index([pnrId])
+  @@index([flightId])
+  @@index([fareId])
+  @@index([departureDate])
+  @@map("pnr_segments")
+}
+
 model Passenger {
-  id             String       @id @default(uuid())
-  reservationId  String
-  firstName      String
-  lastName       String
-  dateOfBirth    DateTime
-  passportNumber String?
-  nationality    String?
-  email          String?
-  phoneNumber    String?
-  createdAt      DateTime     @default(now())
-  updatedAt      DateTime     @updatedAt
+  id              String      @id @default(uuid())
+  pnrId           String
 
-  reservation    Reservation  @relation(fields: [reservationId], references: [id], onDelete: Cascade)
+  // Personal Info
+  type            PassengerType @default(ADULT)
+  title           String?
+  firstName       String
+  lastName        String
+  middleName      String?
+  gender          GenderType?
+  dateOfBirth     DateTime?
 
-  @@index([reservationId])
+  // Contact
+  email           String?
+  phoneNumber     String?
+
+  // Travel Document
+  documentType    DocumentType?
+  documentNumber  String?
+  documentIssueCountry String?
+  documentExpiry  DateTime?
+  nationality     String?
+
+  // Frequent Flyer
+  frequentFlyerNumber String?
+  frequentFlyerTier   String?
+
+  // Special Services
+  specialMeals    String[]
+  specialRequests String[]
+  wheelchairRequired Boolean   @default(false)
+  medicalInfo     String?
+
+  // Check-in & Boarding
+  seatAssignment  String?
+  boardingPass    String?
+
+  // Metadata
+  metadata        Json?
+
+  createdAt       DateTime    @default(now())
+  updatedAt       DateTime    @updatedAt
+
+  // Relations
+  pnr             PNR         @relation(fields: [pnrId], references: [id], onDelete: Cascade)
+  seats           Seat[]
+  ancillaries     AncillaryPurchase[]
+  checkIns        CheckIn[]
+  boardingRecords BoardingRecord[]
+  baggage         Baggage[]
+
+  @@index([pnrId])
+  @@index([lastName, firstName])
+  @@index([email])
+  @@index([frequentFlyerNumber])
   @@map("passengers")
 }
 
-model Reservation {
-  id            String            @id @default(uuid())
-  userId        String
-  pnr           String            @unique
-  status        ReservationStatus @default(PENDING)
-  flightId      String
-  cabinClass    CabinClass
-  seatNumbers   String[]
-  totalAmount   Float
-  currency      String            @default("USD")
-  paymentStatus String            @default("PENDING")
-  bookingDate   DateTime          @default(now())
-  expiryDate    DateTime
-  createdAt     DateTime          @default(now())
-  updatedAt     DateTime          @updatedAt
+// ============================================================================
+// OPERATIONAL TABLES
+// ============================================================================
 
-  user          User              @relation(fields: [userId], references: [id])
-  flight        Flight            @relation(fields: [flightId], references: [id])
-  passengers    Passenger[]
-  payments      Payment[]
-
-  @@index([userId])
-  @@index([pnr])
-  @@index([flightId])
-  @@index([status])
-  @@map("reservations")
-}
-
-model Payment {
+model CheckIn {
   id              String        @id @default(uuid())
-  reservationId   String
-  userId          String
-  amount          Float
-  currency        String        @default("USD")
-  status          PaymentStatus @default(PENDING)
-  method          PaymentMethod
-  transactionId   String?
-  gatewayResponse Json?
+  pnrId           String
+  passengerId     String
+  userId          String?
+
+  flightId        String
+
+  // Check-in Details
+  channel         String        // WEB, MOBILE, KIOSK, COUNTER, API
+  counter         String?
+  agent           String?
+
+  // Seat
+  seatNumber      String?
+  seatChanged     Boolean       @default(false)
+  previousSeat    String?
+
+  // Baggage
+  baggageCount    Int           @default(0)
+  baggageWeight   Float?
+
+  // Status
+  status          CheckInStatus @default(COMPLETED)
+
+  // Boarding Pass
+  boardingPassNumber String?
+  boardingGroup   String?
+  sequenceNumber  Int?
+
+  checkInTime     DateTime      @default(now())
+
+  // Metadata
+  metadata        Json?
+
   createdAt       DateTime      @default(now())
   updatedAt       DateTime      @updatedAt
 
-  reservation     Reservation   @relation(fields: [reservationId], references: [id])
-  user            User          @relation(fields: [userId], references: [id])
+  // Relations
+  pnr             PNR           @relation(fields: [pnrId], references: [id])
+  passenger       Passenger     @relation(fields: [passengerId], references: [id])
+  user            User?         @relation(fields: [userId], references: [id])
 
-  @@index([reservationId])
-  @@index([userId])
+  @@index([pnrId])
+  @@index([passengerId])
+  @@index([flightId])
+  @@index([checkInTime])
+  @@map("check_ins")
+}
+
+model BoardingRecord {
+  id              String         @id @default(uuid())
+  passengerId     String
+  flightId        String
+
+  // Boarding Details
+  boardingTime    DateTime?
+  gate            String?
+  boardedBy       String?       // Agent/System
+
+  status          BoardingStatus @default(NOT_BOARDED)
+
+  // Metadata
+  metadata        Json?
+
+  createdAt       DateTime       @default(now())
+  updatedAt       DateTime       @updatedAt
+
+  // Relations
+  passenger       Passenger      @relation(fields: [passengerId], references: [id])
+
+  @@index([passengerId])
+  @@index([flightId])
+  @@index([boardingTime])
   @@index([status])
+  @@map("boarding_records")
+}
+
+model Baggage {
+  id              String         @id @default(uuid())
+  passengerId     String
+  flightId        String
+  pnrId           String
+
+  // Bag Details
+  tagNumber       String         @unique
+  weight          Float
+  pieces          Int            @default(1)
+
+  // Routing
+  origin          String
+  destination     String
+  currentLocation String?
+
+  // Status
+  status          BaggageStatus  @default(CHECKED_IN)
+
+  // Special Handling
+  isFragile       Boolean        @default(false)
+  isPriority      Boolean        @default(false)
+  specialHandling String?
+
+  // Tracking
+  checkedInAt     DateTime?
+  loadedAt        DateTime?
+  arrivedAt       DateTime?
+  deliveredAt     DateTime?
+
+  // Incidents
+  isLost          Boolean        @default(false)
+  isDamaged       Boolean        @default(false)
+  incidentReport  String?
+
+  // Metadata
+  metadata        Json?
+
+  createdAt       DateTime       @default(now())
+  updatedAt       DateTime       @updatedAt
+
+  // Relations
+  passenger       Passenger      @relation(fields: [passengerId], references: [id])
+
+  @@index([passengerId])
+  @@index([flightId])
+  @@index([pnrId])
+  @@index([tagNumber])
+  @@index([status])
+  @@map("baggage")
+}
+
+model LoadControl {
+  id              String    @id @default(uuid())
+  flightId        String    @unique
+
+  // Weight & Balance
+  totalPassengers Int
+  totalBaggage    Int
+  totalCargo      Int       @default(0)
+  totalFuel       Float
+
+  actualWeight    Float
+  maximumWeight   Float
+
+  // Center of Gravity
+  centerOfGravity Float?
+
+  // Load Distribution
+  forwardHold     Float     @default(0)
+  aftHold         Float     @default(0)
+
+  // Fuel
+  fuelOnBoard     Float
+  fuelRequired    Float
+
+  // Status
+  isFinalized     Boolean   @default(false)
+  finalizedBy     String?
+  finalizedAt     DateTime?
+
+  // Metadata
+  metadata        Json?
+
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+
+  // Relations
+  flight          Flight    @relation(fields: [flightId], references: [id])
+
+  @@index([flightId])
+  @@index([isFinalized])
+  @@map("load_control")
+}
+
+model FlightOperation {
+  id              String       @id @default(uuid())
+  flightId        String
+
+  // Operational Events
+  eventType       String       // GATE_OPEN, BOARDING_START, DOOR_CLOSE, etc.
+  eventTime       DateTime
+  eventBy         String?
+
+  // Details
+  details         Json?
+
+  // Delays
+  delayCode       String?
+  delayMinutes    Int?
+  delayReason     String?
+
+  createdAt       DateTime     @default(now())
+
+  // Relations
+  flight          Flight       @relation(fields: [flightId], references: [id])
+
+  @@index([flightId])
+  @@index([eventType])
+  @@index([eventTime])
+  @@map("flight_operations")
+}
+
+// ============================================================================
+// FINANCIAL TABLES
+// ============================================================================
+
+model Payment {
+  id              String         @id @default(uuid())
+  pnrId           String
+  userId          String
+
+  // Amount
+  amount          Float
+  currency        String         @default("USD")
+
+  // Payment Method
+  method          PaymentMethod
+  gateway         PaymentGateway?
+
+  // Transaction Details
+  transactionId   String?        @unique
+  gatewayTransactionId String?
+  authorizationCode String?
+
+  // Card Details (tokenized)
+  cardLast4       String?
+  cardBrand       String?
+  cardToken       String?
+
+  // Status
+  status          PaymentStatus  @default(PENDING)
+
+  // Timestamps
+  authorizedAt    DateTime?
+  capturedAt      DateTime?
+  failedAt        DateTime?
+  refundedAt      DateTime?
+
+  // Gateway Response
+  gatewayResponse Json?
+
+  // Error Details
+  errorCode       String?
+  errorMessage    String?
+
+  // Metadata
+  metadata        Json?
+  ipAddress       String?
+
+  createdAt       DateTime       @default(now())
+  updatedAt       DateTime       @updatedAt
+
+  // Relations
+  pnr             PNR            @relation(fields: [pnrId], references: [id])
+  user            User           @relation(fields: [userId], references: [id])
+  refunds         Refund[]
+  revenueRecords  RevenueAccounting[]
+
+  @@index([pnrId])
+  @@index([userId])
+  @@index([transactionId])
+  @@index([status])
+  @@index([createdAt])
   @@map("payments")
 }
 
-model Notification {
-  id          String               @id @default(uuid())
-  userId      String
-  type        NotificationType
-  template    NotificationTemplate
-  recipient   String
-  subject     String?
-  content     String
-  status      NotificationStatus   @default(PENDING)
-  metadata    Json?
-  sentAt      DateTime?
-  deliveredAt DateTime?
-  createdAt   DateTime             @default(now())
-  updatedAt   DateTime             @updatedAt
+model Refund {
+  id              String        @id @default(uuid())
+  paymentId       String
+  pnrId           String
 
-  user        User                 @relation(fields: [userId], references: [id])
+  // Amount
+  amount          Float
+  currency        String        @default("USD")
+
+  // Reason
+  reason          String
+  reasonCode      String?
+
+  // Status
+  status          String        @default("PENDING") // PENDING, PROCESSING, COMPLETED, FAILED
+
+  // Processing
+  processedBy     String?
+  processedAt     DateTime?
+
+  // Gateway
+  refundTransactionId String?
+  gatewayResponse Json?
+
+  // Approval
+  approvedBy      String?
+  approvedAt      DateTime?
+
+  // Metadata
+  metadata        Json?
+
+  createdAt       DateTime      @default(now())
+  updatedAt       DateTime      @updatedAt
+
+  // Relations
+  payment         Payment       @relation(fields: [paymentId], references: [id])
+
+  @@index([paymentId])
+  @@index([pnrId])
+  @@index([status])
+  @@index([createdAt])
+  @@map("refunds")
+}
+
+model RevenueAccounting {
+  id              String          @id @default(uuid())
+  paymentId       String
+  pnrId           String
+
+  // Transaction
+  transactionType TransactionType
+  transactionDate DateTime
+
+  // Amounts
+  grossAmount     Float
+  netAmount       Float
+  taxAmount       Float
+  commissionAmount Float          @default(0)
+  feeAmount       Float          @default(0)
+
+  currency        String          @default("USD")
+
+  // Accounting Period
+  accountingPeriod String         // YYYY-MM
+  fiscalYear      Int
+  fiscalQuarter   Int
+
+  // Status
+  isReconciled    Boolean         @default(false)
+  reconciledAt    DateTime?
+  reconciledBy    String?
+
+  // Metadata
+  metadata        Json?
+
+  createdAt       DateTime        @default(now())
+  updatedAt       DateTime        @updatedAt
+
+  // Relations
+  payment         Payment         @relation(fields: [paymentId], references: [id])
+
+  @@index([paymentId])
+  @@index([pnrId])
+  @@index([transactionType])
+  @@index([accountingPeriod])
+  @@index([isReconciled])
+  @@map("revenue_accounting")
+}
+
+model Commission {
+  id              String    @id @default(uuid())
+  pnrId           String
+
+  // Agent/Partner
+  agentId         String
+  agentType       String    // TRAVEL_AGENT, OTA, CORPORATE, etc.
+
+  // Commission
+  baseAmount      Float
+  commissionRate  Float     // percentage
+  commissionAmount Float
+  currency        String    @default("USD")
+
+  // Payment
+  isPaid          Boolean   @default(false)
+  paidAt          DateTime?
+  paidBy          String?
+
+  // Period
+  periodStart     DateTime
+  periodEnd       DateTime
+
+  // Metadata
+  metadata        Json?
+
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+
+  @@index([pnrId])
+  @@index([agentId])
+  @@index([isPaid])
+  @@index([periodStart, periodEnd])
+  @@map("commissions")
+}
+
+// ============================================================================
+// NOTIFICATIONS
+// ============================================================================
+
+model Notification {
+  id              String              @id @default(uuid())
+  userId          String
+  pnrId           String?
+
+  type            NotificationType
+  channel         String              // specific channel used
+
+  // Recipient
+  recipient       String              // email/phone based on type
+
+  // Content
+  subject         String?
+  body            String              @db.Text
+  template        String?
+  templateData    Json?
+
+  // Status
+  status          NotificationStatus  @default(PENDING)
+
+  // Delivery
+  sentAt          DateTime?
+  deliveredAt     DateTime?
+  readAt          DateTime?
+
+  // Errors
+  failureReason   String?
+  retryCount      Int                 @default(0)
+  maxRetries      Int                 @default(3)
+
+  // External IDs
+  externalId      String?             // Provider message ID
+
+  // Metadata
+  metadata        Json?
+
+  createdAt       DateTime            @default(now())
+  updatedAt       DateTime            @updatedAt
+
+  // Relations
+  user            User                @relation(fields: [userId], references: [id])
+  pnr             PNR?                @relation(fields: [pnrId], references: [id])
 
   @@index([userId])
-  @@index([status])
+  @@index([pnrId])
   @@index([type])
+  @@index([status])
+  @@index([sentAt])
   @@map("notifications")
+}
+
+// ============================================================================
+// ANALYTICS TABLES
+// ============================================================================
+
+model CustomerSegment {
+  id              String    @id @default(uuid())
+  userId          String
+
+  segmentName     String    // VIP, FREQUENT_FLYER, PRICE_SENSITIVE, etc.
+  segmentType     String    // BEHAVIORAL, DEMOGRAPHIC, VALUE
+
+  // Attributes
+  attributes      Json
+
+  // Scores
+  lifetimeValue   Float?
+  churnRisk       Float?
+  engagementScore Float?
+
+  // Dates
+  assignedAt      DateTime  @default(now())
+  expiresAt       DateTime?
+
+  isActive        Boolean   @default(true)
+
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+
+  // Relations
+  user            User      @relation(fields: [userId], references: [id])
+
+  @@index([userId])
+  @@index([segmentName])
+  @@index([isActive])
+  @@map("customer_segments")
+}
+
+model BookingAnalytic {
+  id              String    @id @default(uuid())
+  pnrId           String
+
+  // Funnel Analytics
+  sessionId       String?
+  searchCount     Int?
+  pageViews       Int?
+  timeToBook      Int?      // seconds
+
+  // Attribution
+  utmSource       String?
+  utmMedium       String?
+  utmCampaign     String?
+  referrer        String?
+
+  // Device & Browser
+  device          String?
+  browser         String?
+  os              String?
+
+  // Geography
+  country         String?
+  city            String?
+  ipAddress       String?
+
+  // Booking Characteristics
+  advancePurchaseDays Int?
+  isRoundTrip     Boolean   @default(false)
+  passengerCount  Int
+
+  // Revenue
+  totalRevenue    Float
+  averagePerPax   Float
+
+  // Metadata
+  metadata        Json?
+
+  createdAt       DateTime  @default(now())
+
+  // Relations
+  pnr             PNR       @relation(fields: [pnrId], references: [id])
+
+  @@index([pnrId])
+  @@index([sessionId])
+  @@index([utmCampaign])
+  @@index([createdAt])
+  @@map("booking_analytics")
+}
+
+model Campaign {
+  id              String    @id @default(uuid())
+  organizationId  String
+
+  name            String
+  description     String?
+  type            String    // PROMOTIONAL, SEASONAL, TARGETED, etc.
+
+  // Campaign Details
+  discountType    String?   // PERCENTAGE, FIXED, BOGO
+  discountValue   Float?
+
+  // Targeting
+  targetSegments  String[]
+  targetRoutes    String[]
+
+  // Validity
+  startDate       DateTime
+  endDate         DateTime
+
+  // Budget
+  budget          Float?
+  spent           Float     @default(0)
+
+  // Performance
+  impressions     Int       @default(0)
+  clicks          Int       @default(0)
+  conversions     Int       @default(0)
+  revenue         Float     @default(0)
+
+  // Status
+  isActive        Boolean   @default(true)
+
+  // Metadata
+  metadata        Json?
+
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+
+  // Relations
+  organization    Organization @relation(fields: [organizationId], references: [id])
+
+  @@index([organizationId])
+  @@index([isActive])
+  @@index([startDate, endDate])
+  @@map("campaigns")
+}
+
+model PerformanceMetric {
+  id              String    @id @default(uuid())
+
+  metricType      String    // FLIGHT_OTP, LOAD_FACTOR, REVENUE, etc.
+  metricName      String
+
+  // Dimensions
+  flightId        String?
+  routeCode       String?
+  date            DateTime
+
+  // Value
+  value           Float
+  target          Float?
+
+  // Aggregation
+  aggregationLevel String   // DAILY, WEEKLY, MONTHLY
+
+  // Metadata
+  metadata        Json?
+
+  createdAt       DateTime  @default(now())
+
+  @@index([metricType])
+  @@index([flightId])
+  @@index([routeCode])
+  @@index([date])
+  @@map("performance_metrics")
 }
