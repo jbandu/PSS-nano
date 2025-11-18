@@ -18,9 +18,9 @@
     "db:generate": "prisma generate"
   },
   "dependencies": {
-    "@airline-ops/database-schemas": "workspace:*",
-    "@airline-ops/shared-types": "workspace:*",
-    "@airline-ops/shared-utils": "workspace:*",
+    "@airline-ops/database-schemas": "*",
+    "@airline-ops/shared-types": "*",
+    "@airline-ops/shared-utils": "*",
     "@prisma/client": "^5.8.1",
     "stripe": "^14.12.0",
     "@paypal/checkout-server-sdk": "^1.0.3",
@@ -59,7 +59,6 @@
     "jest": "^29.7.0",
     "nock": "^13.5.0",
     "prisma": "^5.8.1",
-    "stripe-mock": "^0.1.0",
     "supertest": "^6.3.4",
     "ts-jest": "^29.1.1",
     "ts-node": "^10.9.2",

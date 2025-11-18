@@ -13,8 +13,8 @@
     "test": "jest"
   },
   "dependencies": {
-    "@airline-ops/shared-types": "workspace:*",
-    "@airline-ops/shared-utils": "workspace:*",
+    "@airline-ops/shared-types": "*",
+    "@airline-ops/shared-utils": "*",
     "express": "^4.18.2",
     "express-rate-limit": "^7.1.5",
     "express-slow-down": "^2.0.1",
