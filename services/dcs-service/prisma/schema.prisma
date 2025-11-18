@@ -1,0 +1,621 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ============================================================================
+// Check-in Transaction Management
+// ============================================================================
+
+model CheckInTransaction {
+  id                  String                @id @default(uuid())
+  pnrLocator          String
+  flightId            String
+  agentId             String
+  agentName           String
+  stationCode         String                // Airport code (e.g., JFK, LAX)
+
+  // Transaction Details
+  transactionType     CheckInType           @default(AGENT)
+  status              CheckInStatus         @default(IN_PROGRESS)
+  checkInTime         DateTime              @default(now())
+  completedTime       DateTime?
+
+  // Passenger Information
+  passengers          PassengerCheckIn[]
+  totalPassengers     Int                   @default(1)
+
+  // Services Performed
+  seatsAssigned       Boolean               @default(false)
+  baggageProcessed    Boolean               @default(false)
+  apisCollected       Boolean               @default(false)
+  boardingPassIssued  Boolean               @default(false)
+
+  // Payment
+  feesCollected       Float                 @default(0)
+  paymentTransactionId String?
+
+  // Metadata
+  checkInDuration     Int?                  // Duration in seconds
+  deviceId            String?
+  ipAddress           String?
+  notes               String?
+
+  createdAt           DateTime              @default(now())
+  updatedAt           DateTime              @updatedAt
+
+  @@index([pnrLocator])
+  @@index([flightId])
+  @@index([agentId])
+  @@index([checkInTime])
+  @@index([stationCode])
+  @@map("check_in_transactions")
+}
+
+model PassengerCheckIn {
+  id                    String                  @id @default(uuid())
+  transactionId         String
+  transaction           CheckInTransaction      @relation(fields: [transactionId], references: [id], onDelete: Cascade)
+
+  // Passenger Details
+  passengerId           String
+  passengerType         String                  // ADT, CHD, INF
+  firstName             String
+  lastName              String
+  title                 String?
+
+  // Booking Information
+  sequenceNumber        Int                     // Position in PNR
+  ticketNumber          String?
+  frequentFlyerNumber   String?
+  frequentFlyerTier     String?
+
+  // Seat Assignment
+  seatNumber            String?
+  seatAssignedAt        DateTime?
+  seatType              SeatType?
+  cabinClass            String                  // Y, C, F
+
+  // Baggage
+  baggageTags           BaggageTag[]
+  totalBags             Int                     @default(0)
+  totalWeight           Float                   @default(0)
+
+  // APIS Data
+  apisData              APISData?
+  apisStatus            APISStatus              @default(NOT_REQUIRED)
+
+  // Special Services
+  ssrCodes              String[]                // Array of SSR codes
+  specialRequests       SpecialServiceRequest[]
+  medicalClearance      Boolean                 @default(false)
+
+  // Boarding Pass
+  boardingPassNumber    String?                 @unique
+  boardingSequence      Int?
+  boardingGroup         String?
+  boardingTime          DateTime?
+  gateNumber            String?
+
+  // Status
+  checkInStatus         PassengerStatus         @default(CHECKED_IN)
+  boardingStatus        BoardingStatus          @default(NOT_BOARDED)
+
+  createdAt             DateTime                @default(now())
+  updatedAt             DateTime                @updatedAt
+
+  @@index([transactionId])
+  @@index([passengerId])
+  @@index([boardingPassNumber])
+  @@index([seatNumber])
+  @@map("passenger_check_in")
+}
+
+// ============================================================================
+// Baggage Management
+// ============================================================================
+
+model BaggageTag {
+  id                  String                @id @default(uuid())
+  passengerCheckInId  String
+  passengerCheckIn    PassengerCheckIn      @relation(fields: [passengerCheckInId], references: [id], onDelete: Cascade)
+
+  // Bag Tag Information
+  tagNumber           String                @unique // 10-digit IATA format
+  sequenceNumber      Int                   // Bag sequence for passenger
+
+  // Bag Details
+  weight              Float                 // In kg
+  weightUnit          String                @default("KG")
+  pieceCount          Int                   @default(1)
+  baggageType         BaggageType           @default(CHECKED)
+
+  // Routing
+  origin              String                // 3-letter airport code
+  destination         String                // Final destination
+  connections         String[]              // Connection airports
+
+  // Status Tracking
+  status              BaggageStatus         @default(CHECKED_IN)
+  currentLocation     String?
+
+  // BSM (Baggage Source Message)
+  bsmSent             Boolean               @default(false)
+  bsmSentAt           DateTime?
+  bsmVersion          String                @default("1.6")
+
+  // Special Handling
+  isOverweight        Boolean               @default(false)
+  isOversized         Boolean               @default(false)
+  isFragile           Boolean               @default(false)
+  isPriority          Boolean               @default(false)
+  specialHandlingCodes String[]
+
+  // Fees
+  excessBaggageFee    Float                 @default(0)
+  feePaid             Boolean               @default(false)
+
+  // Tracking
+  scannedAt           DateTime[]
+  deliveryStatus      String?
+
+  createdAt           DateTime              @default(now())
+  updatedAt           DateTime              @updatedAt
+
+  @@index([tagNumber])
+  @@index([passengerCheckInId])
+  @@index([destination])
+  @@index([status])
+  @@map("baggage_tags")
+}
+
+// ============================================================================
+// APIS (Advance Passenger Information System)
+// ============================================================================
+
+model APISData {
+  id                    String                @id @default(uuid())
+  passengerCheckInId    String                @unique
+  passengerCheckIn      PassengerCheckIn      @relation(fields: [passengerCheckInId], references: [id], onDelete: Cascade)
+
+  // Document Information
+  documentType          String                // P=Passport, V=Visa, I=ID Card
+  documentNumber        String
+  issuingCountry        String                // ISO 3166-1 alpha-2
+  nationality           String                // ISO 3166-1 alpha-2
+  expiryDate            DateTime
+
+  // Personal Information
+  dateOfBirth           DateTime
+  gender                String                // M, F, X
+  placeOfBirth          String?
+
+  // Visa Information
+  hasVisa               Boolean               @default(false)
+  visaNumber            String?
+  visaType              String?
+  visaIssuingCountry    String?
+  visaExpiryDate        DateTime?
+
+  // Redress Information
+  redressNumber         String?               // US Secure Flight
+  knownTravelerNumber   String?               // TSA PreCheck
+
+  // Address Information
+  destinationAddress    String?
+  destinationCity       String?
+  destinationCountry    String?
+
+  // Submission Status
+  submittedToAPIS       Boolean               @default(false)
+  submittedAt           DateTime?
+  apisConfirmationNumber String?
+
+  // Government Systems
+  secureFlight          SecureFlightData?
+  caricomImpacs         Boolean               @default(false)
+
+  // Watchlist Screening
+  screeningStatus       ScreeningStatus       @default(PENDING)
+  screeningScore        Float?
+  screeningClearedAt    DateTime?
+  screeningNotes        String?
+
+  // OCR Data
+  ocrProcessed          Boolean               @default(false)
+  ocrConfidence         Float?
+  ocrRawData            Json?
+
+  // Timatic Validation
+  timaticChecked        Boolean               @default(false)
+  timaticResult         String?
+  requiresVisa          Boolean?
+
+  createdAt             DateTime              @default(now())
+  updatedAt             DateTime              @updatedAt
+
+  @@index([documentNumber])
+  @@index([nationality])
+  @@index([screeningStatus])
+  @@map("apis_data")
+}
+
+model SecureFlightData {
+  id                  String                @id @default(uuid())
+  apisDataId          String                @unique
+  apisData            APISData              @relation(fields: [apisDataId], references: [id], onDelete: Cascade)
+
+  // Secure Flight Fields
+  firstName           String
+  middleName          String?
+  lastName            String
+  suffix              String?
+  dateOfBirth         DateTime
+  gender              String
+
+  // Submission
+  submitted           Boolean               @default(false)
+  submittedAt         DateTime?
+  confirmationNumber  String?
+
+  // Clearance
+  clearanceStatus     String                @default("PENDING") // CLEARED, INHIBITED, NOT_CLEARED
+  clearanceCode       String?
+  clearanceMessage    String?
+
+  createdAt           DateTime              @default(now())
+  updatedAt           DateTime              @updatedAt
+
+  @@map("secure_flight_data")
+}
+
+// ============================================================================
+// Special Service Requests (SSR)
+// ============================================================================
+
+model SpecialServiceRequest {
+  id                    String                @id @default(uuid())
+  passengerCheckInId    String
+  passengerCheckIn      PassengerCheckIn      @relation(fields: [passengerCheckInId], references: [id], onDelete: Cascade)
+
+  // SSR Details
+  ssrCode               String                // WCHR, UMNR, PETC, etc.
+  ssrText               String?
+  category              SSRCategory
+
+  // Status
+  status                SSRStatus             @default(REQUESTED)
+  confirmedAt           DateTime?
+
+  // Handling
+  requiresAssistance    Boolean               @default(false)
+  assignedStaff         String?
+  handledAt             DateTime?
+
+  // Documentation
+  medicalCertificate    String?               // File path/URL
+  parentalConsent       String?               // For UMNR
+  notes                 String?
+
+  createdAt             DateTime              @default(now())
+  updatedAt             DateTime              @updatedAt
+
+  @@index([passengerCheckInId])
+  @@index([ssrCode])
+  @@index([status])
+  @@map("special_service_requests")
+}
+
+// ============================================================================
+// Seat Assignment & Blocking
+// ============================================================================
+
+model SeatBlock {
+  id                  String                @id @default(uuid())
+  flightId            String
+  seatNumber          String
+
+  // Block Details
+  blockedBy           String                // Agent ID
+  blockedFor          String?               // Passenger ID
+  blockReason         BlockReason
+
+  // Timing
+  blockedAt           DateTime              @default(now())
+  expiresAt           DateTime
+  released            Boolean               @default(false)
+  releasedAt          DateTime?
+
+  @@index([flightId, seatNumber])
+  @@index([expiresAt])
+  @@map("seat_blocks")
+}
+
+// ============================================================================
+// Agent Management
+// ============================================================================
+
+model AgentSession {
+  id                  String                @id @default(uuid())
+  agentId             String
+  agentName           String
+  agentCode           String
+
+  // Station Information
+  stationCode         String
+  terminalCode        String?
+  counterNumber       String?
+
+  // Session Details
+  loginTime           DateTime              @default(now())
+  logoutTime          DateTime?
+  sessionDuration     Int?                  // In seconds
+  isActive            Boolean               @default(true)
+
+  // Activity Tracking
+  checkInsProcessed   Int                   @default(0)
+  passengersProcessed Int                   @default(0)
+  bagsProcessed       Int                   @default(0)
+  feesCollected       Float                 @default(0)
+
+  // Device Information
+  deviceId            String?
+  deviceType          String?
+  ipAddress           String?
+
+  createdAt           DateTime              @default(now())
+  updatedAt           DateTime              @updatedAt
+
+  @@index([agentId])
+  @@index([stationCode])
+  @@index([isActive])
+  @@map("agent_sessions")
+}
+
+// ============================================================================
+// Standby Management
+// ============================================================================
+
+model StandbyPassenger {
+  id                  String                @id @default(uuid())
+  flightId            String
+  pnrLocator          String
+
+  // Passenger Details
+  passengerId         String
+  firstName           String
+  lastName            String
+  passengerType       String
+
+  // Standby Information
+  priority            Int
+  priorityReason      String                // Status level, check-in time, etc.
+  frequentFlyerTier   String?
+  addedAt             DateTime              @default(now())
+  addedBy             String                // Agent ID
+
+  // Status
+  status              StandbyStatus         @default(LISTED)
+  clearedAt           DateTime?
+  clearedBy           String?
+  seatNumber          String?
+
+  // Denial Information
+  deniedReason        String?
+  compensation        Float?
+
+  createdAt           DateTime              @default(now())
+  updatedAt           DateTime              @updatedAt
+
+  @@index([flightId])
+  @@index([priority])
+  @@index([status])
+  @@map("standby_passengers")
+}
+
+// ============================================================================
+// Load Control
+// ============================================================================
+
+model FlightLoad {
+  id                  String                @id @default(uuid())
+  flightId            String                @unique
+
+  // Passenger Counts
+  totalPassengers     Int                   @default(0)
+  checkedInPassengers Int                   @default(0)
+  boardedPassengers   Int                   @default(0)
+
+  // Cabin Breakdown
+  firstClassCount     Int                   @default(0)
+  businessClassCount  Int                   @default(0)
+  premiumEconomyCount Int                   @default(0)
+  economyCount        Int                   @default(0)
+
+  // Baggage
+  totalBags           Int                   @default(0)
+  totalBagWeight      Float                 @default(0) // In kg
+  cargoPieces         Int                   @default(0)
+  cargoWeight         Float                 @default(0) // In kg
+
+  // Weight & Balance
+  totalWeight         Float?
+  zeroFuelWeight      Float?
+  takeoffWeight       Float?
+  centerOfGravity     Float?
+
+  // Load Sheet
+  loadSheetGenerated  Boolean               @default(false)
+  loadSheetNumber     String?
+  loadSheetData       Json?
+
+  // Flight Close
+  flightClosed        Boolean               @default(false)
+  closedAt            DateTime?
+  closedBy            String?
+
+  // Manifest
+  manifestGenerated   Boolean               @default(false)
+  manifestSentAt      DateTime?
+
+  createdAt           DateTime              @default(now())
+  updatedAt           DateTime              @updatedAt
+
+  @@index([flightId])
+  @@map("flight_loads")
+}
+
+// ============================================================================
+// Audit Log
+// ============================================================================
+
+model CheckInAudit {
+  id                  String                @id @default(uuid())
+
+  // Who
+  agentId             String
+  agentName           String
+
+  // What
+  action              String                // CHECK_IN, SEAT_ASSIGN, BAG_TAG, etc.
+  entity              String                // PNR, PASSENGER, BAGGAGE
+  entityId            String
+
+  // Changes
+  changeType          String                // CREATE, UPDATE, DELETE
+  oldValue            Json?
+  newValue            Json?
+
+  // Context
+  transactionId       String?
+  pnrLocator          String?
+  flightId            String?
+  stationCode         String
+
+  // Metadata
+  ipAddress           String?
+  userAgent           String?
+  notes               String?
+
+  createdAt           DateTime              @default(now())
+
+  @@index([agentId])
+  @@index([action])
+  @@index([entityId])
+  @@index([createdAt])
+  @@map("check_in_audit")
+}
+
+// ============================================================================
+// Enums
+// ============================================================================
+
+enum CheckInType {
+  AGENT
+  WEB
+  MOBILE
+  KIOSK
+}
+
+enum CheckInStatus {
+  IN_PROGRESS
+  COMPLETED
+  CANCELLED
+  FAILED
+}
+
+enum PassengerStatus {
+  CHECKED_IN
+  STANDBY
+  CANCELLED
+  NO_SHOW
+}
+
+enum BoardingStatus {
+  NOT_BOARDED
+  BOARDING
+  BOARDED
+  OFFLOADED
+}
+
+enum SeatType {
+  STANDARD
+  EXTRA_LEGROOM
+  PREMIUM
+  EMERGENCY_EXIT
+  BULKHEAD
+  WINDOW
+  AISLE
+  MIDDLE
+}
+
+enum BaggageType {
+  CHECKED
+  CARRY_ON
+  CABIN
+  GATE_CHECK
+}
+
+enum BaggageStatus {
+  CHECKED_IN
+  LOADED
+  IN_TRANSIT
+  ARRIVED
+  DELIVERED
+  DELAYED
+  LOST
+}
+
+enum APISStatus {
+  NOT_REQUIRED
+  REQUIRED
+  COLLECTED
+  SUBMITTED
+  CONFIRMED
+  REJECTED
+}
+
+enum ScreeningStatus {
+  PENDING
+  CLEARED
+  SELECTEE
+  INHIBITED
+  MANUAL_REVIEW
+}
+
+enum SSRCategory {
+  WHEELCHAIR
+  MEDICAL
+  UNACCOMPANIED_MINOR
+  PET
+  MEAL
+  ASSISTANCE
+  OTHER
+}
+
+enum SSRStatus {
+  REQUESTED
+  CONFIRMED
+  DENIED
+  COMPLETED
+}
+
+enum BlockReason {
+  TEMPORARY_HOLD
+  SEAT_SELECTION
+  MAINTENANCE
+  CREW
+  VIP
+  BLOCKED_SEAT
+}
+
+enum StandbyStatus {
+  LISTED
+  CLEARED
+  DENIED
+  REMOVED
+}
