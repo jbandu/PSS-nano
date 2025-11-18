@@ -1,0 +1,715 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ============================================================================
+// Boarding Pass & Scan Management
+// ============================================================================
+
+model BoardingPass {
+  id                    String                @id @default(uuid())
+
+  // Passenger Information
+  passengerId           String
+  passengerCheckInId    String?
+  firstName             String
+  lastName              String
+  pnrLocator            String
+
+  // Flight Information
+  flightId              String
+  flightNumber          String
+  departureDate         DateTime
+  origin                String
+  destination           String
+
+  // Seat Information
+  seatNumber            String?
+  cabinClass            String
+  boardingZone          Int?
+  boardingSequence      Int?
+  boardingGroup         String?
+
+  // Boarding Pass Details
+  boardingPassNumber    String                @unique
+  barcodeData           String                // IATA BCBP format
+  barcodeType           BarcodeType           @default(PDF417)
+  issueDate             DateTime              @default(now())
+  validUntil            DateTime
+
+  // Status
+  status                BoardingPassStatus    @default(ISSUED)
+  boardedAt             DateTime?
+  boardedBy             String?               // Agent/Gate ID
+  boardingGate          String?
+
+  // Special Handling
+  isPriority            Boolean               @default(false)
+  priorityReason        String?
+  requiresAssistance    Boolean               @default(false)
+  assistanceType        String?
+  isUMNR                Boolean               @default(false)
+  isVIP                 Boolean               @default(false)
+
+  // Frequent Flyer
+  frequentFlyerNumber   String?
+  frequentFlyerTier     String?
+
+  // Scans
+  scans                 BoardingScan[]
+
+  // Metadata
+  createdAt             DateTime              @default(now())
+  updatedAt             DateTime              @updatedAt
+
+  @@index([flightId])
+  @@index([pnrLocator])
+  @@index([boardingPassNumber])
+  @@index([passengerId])
+  @@index([status])
+  @@map("boarding_passes")
+}
+
+model BoardingScan {
+  id                    String                @id @default(uuid())
+  boardingPassId        String
+  boardingPass          BoardingPass          @relation(fields: [boardingPassId], references: [id], onDelete: Cascade)
+
+  // Scan Details
+  scanTime              DateTime              @default(now())
+  scanType              ScanType
+  scannedBy             String                // Agent/Gate ID
+  gateNumber            String
+  scannerDevice         String?
+
+  // Validation
+  isValid               Boolean               @default(true)
+  validationStatus      ValidationStatus
+  validationMessage     String?
+  processingTime        Int?                  // In milliseconds
+
+  // Duplicate Detection
+  isDuplicate           Boolean               @default(false)
+  duplicateOf           String?               // Reference to original scan
+  duplicateInterval     Int?                  // Seconds since last scan
+
+  // Boarding Zone Validation
+  expectedZone          Int?
+  actualZone            Int?
+  zoneViolation         Boolean               @default(false)
+
+  // Seat Verification
+  seatVerified          Boolean               @default(false)
+  seatMismatch          Boolean               @default(false)
+  expectedSeat          String?
+  actualSeat            String?
+
+  // Biometric
+  biometricVerified     Boolean               @default(false)
+  biometricConfidence   Float?
+  biometricMatchId      String?
+
+  // Metadata
+  metadata              Json?
+
+  @@index([boardingPassId])
+  @@index([scanTime])
+  @@index([gateNumber])
+  @@map("boarding_scans")
+}
+
+// ============================================================================
+// Boarding Zone Configuration
+// ============================================================================
+
+model BoardingZoneConfig {
+  id                    String                @id @default(uuid())
+  flightId              String
+
+  // Zone Configuration
+  zoneNumber            Int
+  zoneName              String
+  zoneDescription       String?
+
+  // Priority
+  priority              Int                   // Lower number = higher priority
+
+  // Eligibility
+  eligibleCabinClasses  String[]
+  eligibleFareClasses   String[]
+  eligibleFFTiers       String[]
+  specialConditions     String[]
+
+  // Timing
+  boardingStartTime     DateTime?
+  boardingEndTime       DateTime?
+  estimatedDuration     Int?                  // Minutes
+
+  // Capacity
+  expectedPassengers    Int?
+  actualPassengers      Int                   @default(0)
+
+  // Status
+  status                ZoneStatus            @default(PENDING)
+  announcementMade      Boolean               @default(false)
+  announcementTime      DateTime?
+
+  createdAt             DateTime              @default(now())
+  updatedAt             DateTime              @updatedAt
+
+  @@unique([flightId, zoneNumber])
+  @@index([flightId])
+  @@index([status])
+  @@map("boarding_zone_configs")
+}
+
+// ============================================================================
+// Gate Operations
+// ============================================================================
+
+model GateOperation {
+  id                    String                @id @default(uuid())
+  flightId              String
+  gateNumber            String
+
+  // Gate Assignment
+  assignedAt            DateTime              @default(now())
+  assignedBy            String?
+  changeReason          String?
+
+  // Boarding Status
+  boardingStatus        BoardingStatus        @default(NOT_STARTED)
+  boardingStartTime     DateTime?
+  boardingEndTime       DateTime?
+
+  // Counts
+  totalPassengers       Int                   @default(0)
+  boardedPassengers     Int                   @default(0)
+  standbyPassengers     Int                   @default(0)
+  clearedStandby        Int                   @default(0)
+  noShowPassengers      Int                   @default(0)
+
+  // Cabin Breakdown
+  firstClassBoarded     Int                   @default(0)
+  businessClassBoarded  Int                   @default(0)
+  premiumEconomyBoarded Int                   @default(0)
+  economyBoarded        Int                   @default(0)
+
+  // Special Handling
+  wheelchairPassengers  Int                   @default(0)
+  umnrPassengers        Int                   @default(0)
+  vipPassengers         Int                   @default(0)
+
+  // Weight & Balance
+  weightBalanceStatus   String?
+  loadSheetReceived     Boolean               @default(false)
+  loadSheetReceivedAt   DateTime?
+
+  // Door Closure
+  doorsClosed           Boolean               @default(false)
+  doorsClosedAt         DateTime?
+  doorsClosedBy         String?
+
+  // Flight Departure
+  readyForDeparture     Boolean               @default(false)
+  departureReady        DateTime?
+  actualDeparture       DateTime?
+
+  // Performance
+  boardingDuration      Int?                  // Minutes
+  avgScanInterval       Float?                // Seconds
+  boardingSpeed         Float?                // Passengers per minute
+
+  // Delays
+  delayMinutes          Int                   @default(0)
+  delayReasons          String[]
+
+  // Agents
+  gateAgents            String[]
+  supervisorOnDuty      String?
+
+  createdAt             DateTime              @default(now())
+  updatedAt             DateTime              @updatedAt
+
+  @@index([flightId])
+  @@index([gateNumber])
+  @@index([boardingStatus])
+  @@map("gate_operations")
+}
+
+// ============================================================================
+// Last-Minute Changes
+// ============================================================================
+
+model LastMinuteChange {
+  id                    String                @id @default(uuid())
+  flightId              String
+  gateNumber            String
+
+  // Change Type
+  changeType            ChangeType
+
+  // Passenger
+  passengerId           String
+  passengerName         String
+  pnrLocator            String
+
+  // Change Details
+  changeFrom            String?
+  changeTo              String?
+  changeReason          String
+
+  // Authorization
+  authorizedBy          String
+  authorizedAt          DateTime              @default(now())
+  requiresSupervisor    Boolean               @default(false)
+
+  // Impact
+  impactLevel           ImpactLevel
+  weightBalanceImpact   Boolean               @default(false)
+
+  // Status
+  status                ChangeStatus          @default(PENDING)
+  completedAt           DateTime?
+
+  createdAt             DateTime              @default(now())
+  updatedAt             DateTime              @updatedAt
+
+  @@index([flightId])
+  @@index([gateNumber])
+  @@index([changeType])
+  @@map("last_minute_changes")
+}
+
+// ============================================================================
+// Standby Management
+// ============================================================================
+
+model StandbyBoarding {
+  id                    String                @id @default(uuid())
+  flightId              String
+  gateNumber            String
+
+  // Passenger
+  passengerId           String
+  passengerName         String
+  pnrLocator            String
+
+  // Priority
+  priority              Int
+  priorityReason        String
+  frequentFlyerTier     String?
+
+  // Status
+  status                StandbyStatus         @default(LISTED)
+  listedAt              DateTime              @default(now())
+  clearedAt             DateTime?
+  clearedBy             String?
+
+  // Seat Assignment
+  seatNumber            String?
+  cabinClass            String?
+  upgraded              Boolean               @default(false)
+  upgradeFrom           String?
+
+  // Denial
+  deniedReason          String?
+  compensation          Float?
+
+  createdAt             DateTime              @default(now())
+  updatedAt             DateTime              @updatedAt
+
+  @@index([flightId])
+  @@index([status])
+  @@index([priority])
+  @@map("standby_boarding")
+}
+
+// ============================================================================
+// No-Show Processing
+// ============================================================================
+
+model NoShowPassenger {
+  id                    String                @id @default(uuid())
+  flightId              String
+  gateNumber            String
+
+  // Passenger
+  passengerId           String
+  passengerName         String
+  pnrLocator            String
+  seatNumber            String?
+
+  // No-Show Details
+  markedNoShowAt        DateTime              @default(now())
+  markedBy              String
+  cutoffTime            DateTime
+
+  // Baggage
+  hasBaggage            Boolean               @default(false)
+  baggageOffloaded      Boolean               @default(false)
+  baggageOffloadedAt    DateTime?
+  baggageCount          Int                   @default(0)
+
+  // Notifications
+  notificationSent      Boolean               @default(false)
+  notificationSentAt    DateTime?
+  notificationMethod    String?
+
+  // Status
+  status                NoShowStatus          @default(CONFIRMED)
+
+  createdAt             DateTime              @default(now())
+  updatedAt             DateTime              @updatedAt
+
+  @@index([flightId])
+  @@index([passengerId])
+  @@map("no_show_passengers")
+}
+
+// ============================================================================
+// Boarding Analytics
+// ============================================================================
+
+model BoardingAnalytics {
+  id                    String                @id @default(uuid())
+  flightId              String
+  gateNumber            String
+  date                  DateTime
+
+  // Overall Metrics
+  totalPassengers       Int
+  boardedPassengers     Int
+  boardingDuration      Int                   // Minutes
+  targetDuration        Int                   // Minutes
+  onTimeBoarding        Boolean
+
+  // Speed Metrics
+  avgScanInterval       Float                 // Seconds
+  avgProcessingTime     Float                 // Milliseconds
+  peakBoardingSpeed     Float                 // Passengers per minute
+  avgBoardingSpeed      Float                 // Passengers per minute
+
+  // Zone Effectiveness
+  zoneCompliance        Float                 // Percentage
+  zoneViolations        Int
+  zoneOptimal           Boolean
+
+  // Bottlenecks
+  bottleneckDetected    Boolean               @default(false)
+  bottleneckZone        Int?
+  bottleneckDuration    Int?                  // Seconds
+  bottleneckCause       String?
+
+  // Flow Optimization
+  flowScore             Float?                // 0-100
+  queueTime             Float?                // Average queue time in seconds
+  boardingEfficiency    Float?                // Percentage
+
+  // Special Handling
+  priorityBoardings     Int                   @default(0)
+  assistanceRequired    Int                   @default(0)
+  seatChanges           Int                   @default(0)
+
+  // Issues
+  duplicateScans        Int                   @default(0)
+  invalidScans          Int                   @default(0)
+  seatMismatches        Int                   @default(0)
+
+  // Recommendations
+  recommendations       String[]
+  improvementAreas      String[]
+
+  createdAt             DateTime              @default(now())
+  updatedAt             DateTime              @updatedAt
+
+  @@unique([flightId, date])
+  @@index([flightId])
+  @@index([date])
+  @@index([onTimeBoarding])
+  @@map("boarding_analytics")
+}
+
+// ============================================================================
+// Gate Displays
+// ============================================================================
+
+model GateDisplay {
+  id                    String                @id @default(uuid())
+  gateNumber            String                @unique
+
+  // Display Configuration
+  displayType           String                // LED, LCD, TV
+  resolution            String?
+  refreshRate           Int                   @default(5000) // Milliseconds
+
+  // Current Content
+  currentFlight         String?
+  boardingStatus        String?
+  boardingZone          Int?
+  messageText           String?
+  messageLanguages      String[]
+
+  // Status
+  isOnline              Boolean               @default(true)
+  lastUpdate            DateTime?
+  lastHeartbeat         DateTime?
+
+  // Connection
+  ipAddress             String?
+  macAddress            String?
+  firmwareVersion       String?
+
+  createdAt             DateTime              @default(now())
+  updatedAt             DateTime              @updatedAt
+
+  @@index([gateNumber])
+  @@map("gate_displays")
+}
+
+// ============================================================================
+// Biometric Boarding
+// ============================================================================
+
+model BiometricBoarding {
+  id                    String                @id @default(uuid())
+  passengerId           String
+  flightId              String
+
+  // Biometric Data
+  biometricType         BiometricType
+  biometricTemplateId   String                // Reference to secure storage
+  captureTime           DateTime              @default(now())
+  captureQuality        Float?
+
+  // Verification
+  verificationAttempts  Int                   @default(0)
+  verificationSuccess   Boolean?
+  verificationTime      DateTime?
+  confidenceScore       Float?
+
+  // Matching
+  matchedAgainst        String?
+  matchConfidence       Float?
+  matchDuration         Int?                  // Milliseconds
+
+  // Fallback
+  fallbackUsed          Boolean               @default(false)
+  fallbackMethod        String?
+
+  // Status
+  status                BiometricStatus       @default(CAPTURED)
+
+  createdAt             DateTime              @default(now())
+  updatedAt             DateTime              @updatedAt
+
+  @@index([passengerId])
+  @@index([flightId])
+  @@map("biometric_boarding")
+}
+
+// ============================================================================
+// Operational Messages
+// ============================================================================
+
+model OperationalMessage {
+  id                    String                @id @default(uuid())
+  flightId              String
+  gateNumber            String
+
+  // Message Details
+  messageType           MessageType
+  messageText           String
+  messagePriority       MessagePriority       @default(NORMAL)
+
+  // Recipients
+  recipientType         String                // CREW, GATE_AGENT, OPERATIONS, ALL
+  recipients            String[]
+
+  // Status
+  sent                  Boolean               @default(false)
+  sentAt                DateTime?
+  acknowledged          Boolean               @default(false)
+  acknowledgedAt        DateTime?
+  acknowledgedBy        String?
+
+  // Metadata
+  expiresAt             DateTime?
+
+  createdAt             DateTime              @default(now())
+  updatedAt             DateTime              @updatedAt
+
+  @@index([flightId])
+  @@index([gateNumber])
+  @@index([messageType])
+  @@map("operational_messages")
+}
+
+// ============================================================================
+// Audit Log
+// ============================================================================
+
+model BoardingAudit {
+  id                    String                @id @default(uuid())
+
+  // Who
+  agentId               String
+  agentName             String
+
+  // What
+  action                String                // SCAN, ASSIGN_GATE, CHANGE_SEAT, etc.
+  entity                String                // BOARDING_PASS, GATE, PASSENGER
+  entityId              String
+
+  // Changes
+  changeType            String                // CREATE, UPDATE, DELETE
+  oldValue              Json?
+  newValue              Json?
+
+  // Context
+  flightId              String?
+  gateNumber            String?
+  pnrLocator            String?
+
+  // Metadata
+  ipAddress             String?
+  userAgent             String?
+  notes                 String?
+
+  createdAt             DateTime              @default(now())
+
+  @@index([agentId])
+  @@index([action])
+  @@index([flightId])
+  @@index([createdAt])
+  @@map("boarding_audit")
+}
+
+// ============================================================================
+// Enums
+// ============================================================================
+
+enum BarcodeType {
+  PDF417
+  QR_CODE
+  CODE_128
+  AZTEC
+  DATA_MATRIX
+}
+
+enum BoardingPassStatus {
+  ISSUED
+  BOARDED
+  CANCELLED
+  EXPIRED
+  NO_SHOW
+}
+
+enum ScanType {
+  BOARDING
+  VERIFICATION
+  RESCAN
+  MANUAL
+}
+
+enum ValidationStatus {
+  VALID
+  INVALID_BARCODE
+  EXPIRED
+  DUPLICATE
+  WRONG_FLIGHT
+  WRONG_GATE
+  WRONG_DATE
+  CANCELLED
+  ALREADY_BOARDED
+}
+
+enum ZoneStatus {
+  PENDING
+  READY
+  BOARDING
+  COMPLETED
+}
+
+enum BoardingStatus {
+  NOT_STARTED
+  PRE_BOARDING
+  GENERAL_BOARDING
+  FINAL_CALL
+  BOARDING_COMPLETE
+  DOORS_CLOSED
+  DEPARTED
+}
+
+enum ChangeType {
+  SEAT_CHANGE
+  UPGRADE
+  DOWNGRADE
+  STANDBY_CLEAR
+  NO_SHOW
+  OFFLOAD
+}
+
+enum ImpactLevel {
+  LOW
+  MEDIUM
+  HIGH
+  CRITICAL
+}
+
+enum ChangeStatus {
+  PENDING
+  APPROVED
+  REJECTED
+  COMPLETED
+}
+
+enum StandbyStatus {
+  LISTED
+  CLEARED
+  DENIED
+  REMOVED
+}
+
+enum NoShowStatus {
+  CONFIRMED
+  BAGGAGE_OFFLOADED
+  REVERSED
+}
+
+enum BiometricType {
+  FACIAL_RECOGNITION
+  FINGERPRINT
+  IRIS_SCAN
+}
+
+enum BiometricStatus {
+  CAPTURED
+  VERIFIED
+  FAILED
+}
+
+enum MessageType {
+  GATE_ASSIGNMENT
+  BOARDING_START
+  BOARDING_ZONE
+  FINAL_CALL
+  BOARDING_COMPLETE
+  DOOR_CLOSURE
+  DEPARTURE_READY
+  DELAY
+  CANCELLATION
+  GATE_CHANGE
+}
+
+enum MessagePriority {
+  LOW
+  NORMAL
+  HIGH
+  URGENT
+}
