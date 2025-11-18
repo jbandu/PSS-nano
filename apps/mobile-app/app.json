@@ -1,0 +1,10 @@
+{
+  "name": "AirlineOps",
+  "displayName": "Airline Ops",
+  "version": "1.0.0",
+  "buildNumber": "1",
+  "minSdkVersion": 29,
+  "targetSdkVersion": 34,
+  "compileSdkVersion": 34,
+  "deploymentTarget": "14.0"
+}
