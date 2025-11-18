@@ -19,8 +19,8 @@
     "admin:build": "cd admin && npm run build"
   },
   "dependencies": {
-    "@airline-ops/database-schemas": "workspace:*",
-    "@airline-ops/shared-types": "workspace:*",
+    "@airline-ops/database-schemas": "*",
+    "@airline-ops/shared-types": "*",
     "@apollo/server": "^4.10.0",
     "@aws-sdk/client-s3": "^3.504.0",
     "@aws-sdk/s3-request-presigner": "^3.504.0",
