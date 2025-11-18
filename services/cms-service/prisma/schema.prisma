@@ -1,0 +1,752 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ============================================================================
+// Content Models
+// ============================================================================
+
+model Page {
+  id              String            @id @default(uuid())
+  slug            String            @unique
+  title           String
+  content         Json              // Rich text content
+  excerpt         String?
+  template        String?           // Layout template
+  status          ContentStatus     @default(DRAFT)
+  publishedAt     DateTime?
+  scheduledFor    DateTime?
+  locale          String            @default("en")
+  seoMetadata     SeoMetadata?
+
+  // Relationships
+  authorId        String
+  author          User              @relation(fields: [authorId], references: [id])
+  versions        PageVersion[]
+  localizations   PageLocalization[]
+  media           Media[]
+
+  // Metadata
+  createdAt       DateTime          @default(now())
+  updatedAt       DateTime          @updatedAt
+
+  @@index([slug])
+  @@index([status])
+  @@index([publishedAt])
+  @@index([locale])
+}
+
+model PageVersion {
+  id              String            @id @default(uuid())
+  pageId          String
+  page            Page              @relation(fields: [pageId], references: [id], onDelete: Cascade)
+  versionNumber   Int
+  title           String
+  content         Json
+  excerpt         String?
+  seoMetadata     Json?
+  createdAt       DateTime          @default(now())
+  createdBy       String
+
+  @@unique([pageId, versionNumber])
+  @@index([pageId])
+}
+
+model PageLocalization {
+  id              String            @id @default(uuid())
+  pageId          String
+  page            Page              @relation(fields: [pageId], references: [id], onDelete: Cascade)
+  locale          String
+  title           String
+  content         Json
+  excerpt         String?
+  seoMetadata     Json?
+  createdAt       DateTime          @default(now())
+  updatedAt       DateTime          @updatedAt
+
+  @@unique([pageId, locale])
+  @@index([pageId])
+  @@index([locale])
+}
+
+model BlogPost {
+  id              String            @id @default(uuid())
+  slug            String            @unique
+  title           String
+  content         Json
+  excerpt         String?
+  coverImage      String?
+  status          ContentStatus     @default(DRAFT)
+  publishedAt     DateTime?
+  scheduledFor    DateTime?
+  locale          String            @default("en")
+  readTime        Int?              // minutes
+  seoMetadata     SeoMetadata?
+
+  // Relationships
+  authorId        String
+  author          User              @relation(fields: [authorId], references: [id])
+  categories      BlogCategory[]
+  tags            Tag[]
+  versions        BlogVersion[]
+  localizations   BlogLocalization[]
+  media           Media[]
+
+  // Analytics
+  viewCount       Int               @default(0)
+  shareCount      Int               @default(0)
+
+  // Metadata
+  createdAt       DateTime          @default(now())
+  updatedAt       DateTime          @updatedAt
+
+  @@index([slug])
+  @@index([status])
+  @@index([publishedAt])
+  @@index([locale])
+  @@index([authorId])
+}
+
+model BlogVersion {
+  id              String            @id @default(uuid())
+  blogPostId      String
+  blogPost        BlogPost          @relation(fields: [blogPostId], references: [id], onDelete: Cascade)
+  versionNumber   Int
+  title           String
+  content         Json
+  excerpt         String?
+  createdAt       DateTime          @default(now())
+  createdBy       String
+
+  @@unique([blogPostId, versionNumber])
+  @@index([blogPostId])
+}
+
+model BlogLocalization {
+  id              String            @id @default(uuid())
+  blogPostId      String
+  blogPost        BlogPost          @relation(fields: [blogPostId], references: [id], onDelete: Cascade)
+  locale          String
+  title           String
+  content         Json
+  excerpt         String?
+  seoMetadata     Json?
+  createdAt       DateTime          @default(now())
+  updatedAt       DateTime          @updatedAt
+
+  @@unique([blogPostId, locale])
+  @@index([blogPostId])
+  @@index([locale])
+}
+
+model BlogCategory {
+  id              String            @id @default(uuid())
+  slug            String            @unique
+  name            String
+  description     String?
+  blogPosts       BlogPost[]
+  createdAt       DateTime          @default(now())
+  updatedAt       DateTime          @updatedAt
+
+  @@index([slug])
+}
+
+model Banner {
+  id              String            @id @default(uuid())
+  name            String
+  type            BannerType
+  position        BannerPosition
+  content         Json              // Can include images, text, buttons
+  link            String?
+  priority        Int               @default(0)
+  status          ContentStatus     @default(DRAFT)
+
+  // Targeting
+  targetRules     Json?             // Personalization rules
+  startDate       DateTime?
+  endDate         DateTime?
+  locale          String            @default("en")
+
+  // Analytics
+  impressions     Int               @default(0)
+  clicks          Int               @default(0)
+
+  // Relationships
+  createdBy       String
+  creator         User              @relation(fields: [createdBy], references: [id])
+  localizations   BannerLocalization[]
+
+  // Metadata
+  createdAt       DateTime          @default(now())
+  updatedAt       DateTime          @updatedAt
+
+  @@index([status])
+  @@index([startDate, endDate])
+  @@index([locale])
+}
+
+model BannerLocalization {
+  id              String            @id @default(uuid())
+  bannerId        String
+  banner          Banner            @relation(fields: [bannerId], references: [id], onDelete: Cascade)
+  locale          String
+  content         Json
+  link            String?
+  createdAt       DateTime          @default(now())
+  updatedAt       DateTime          @updatedAt
+
+  @@unique([bannerId, locale])
+  @@index([bannerId])
+  @@index([locale])
+}
+
+model Route {
+  id              String            @id @default(uuid())
+  origin          String            // Airport code
+  destination     String            // Airport code
+  name            String            // e.g., "Los Angeles to New York"
+  description     String?
+  content         Json?             // Rich content
+  coverImage      String?
+  status          ContentStatus     @default(DRAFT)
+
+  // Flight info
+  averageDuration Int?              // minutes
+  distance        Int?              // miles/km
+  frequency       String?           // "Daily", "3x weekly"
+
+  // Metadata
+  popularityScore Int               @default(0)
+  seoMetadata     SeoMetadata?
+  locale          String            @default("en")
+
+  // Relationships
+  destinations    Destination[]
+  localizations   RouteLocalization[]
+  media           Media[]
+
+  // Metadata
+  createdAt       DateTime          @default(now())
+  updatedAt       DateTime          @updatedAt
+
+  @@unique([origin, destination])
+  @@index([origin])
+  @@index([destination])
+  @@index([status])
+}
+
+model RouteLocalization {
+  id              String            @id @default(uuid())
+  routeId         String
+  route           Route             @relation(fields: [routeId], references: [id], onDelete: Cascade)
+  locale          String
+  name            String
+  description     String?
+  content         Json?
+  createdAt       DateTime          @default(now())
+  updatedAt       DateTime          @updatedAt
+
+  @@unique([routeId, locale])
+  @@index([routeId])
+  @@index([locale])
+}
+
+model Destination {
+  id              String            @id @default(uuid())
+  code            String            @unique  // Airport/city code
+  name            String
+  country         String
+  region          String?
+  description     String?
+  content         Json?             // Rich content about destination
+  coverImage      String?
+  gallery         String[]          // Array of image URLs
+  status          ContentStatus     @default(DRAFT)
+
+  // Features
+  features        Json?             // Tourist attractions, activities
+  bestTimeToVisit String?
+  averageTemp     Json?             // By season
+  currency        String?
+  language        String?
+  timezone        String?
+
+  // Metadata
+  popularityScore Int               @default(0)
+  seoMetadata     SeoMetadata?
+  locale          String            @default("en")
+
+  // Relationships
+  routes          Route[]
+  localizations   DestinationLocalization[]
+  media           Media[]
+
+  // Metadata
+  createdAt       DateTime          @default(now())
+  updatedAt       DateTime          @updatedAt
+
+  @@index([code])
+  @@index([status])
+  @@index([country])
+}
+
+model DestinationLocalization {
+  id              String            @id @default(uuid())
+  destinationId   String
+  destination     Destination       @relation(fields: [destinationId], references: [id], onDelete: Cascade)
+  locale          String
+  name            String
+  description     String?
+  content         Json?
+  features        Json?
+  createdAt       DateTime          @default(now())
+  updatedAt       DateTime          @updatedAt
+
+  @@unique([destinationId, locale])
+  @@index([destinationId])
+  @@index([locale])
+}
+
+model Faq {
+  id              String            @id @default(uuid())
+  question        String
+  answer          String
+  category        String?
+  priority        Int               @default(0)
+  status          ContentStatus     @default(DRAFT)
+  locale          String            @default("en")
+
+  // Analytics
+  viewCount       Int               @default(0)
+  helpfulCount    Int               @default(0)
+
+  // Relationships
+  localizations   FaqLocalization[]
+
+  // Metadata
+  createdAt       DateTime          @default(now())
+  updatedAt       DateTime          @updatedAt
+
+  @@index([status])
+  @@index([category])
+  @@index([locale])
+}
+
+model FaqLocalization {
+  id              String            @id @default(uuid())
+  faqId           String
+  faq             Faq               @relation(fields: [faqId], references: [id], onDelete: Cascade)
+  locale          String
+  question        String
+  answer          String
+  createdAt       DateTime          @default(now())
+  updatedAt       DateTime          @updatedAt
+
+  @@unique([faqId, locale])
+  @@index([faqId])
+  @@index([locale])
+}
+
+model PressRelease {
+  id              String            @id @default(uuid())
+  title           String
+  subtitle        String?
+  content         Json
+  excerpt         String?
+  coverImage      String?
+  status          ContentStatus     @default(DRAFT)
+  publishedAt     DateTime?
+  locale          String            @default("en")
+
+  // Press info
+  contact         Json?             // Media contact info
+  downloadUrl     String?           // PDF download
+
+  // Metadata
+  seoMetadata     SeoMetadata?
+
+  // Relationships
+  authorId        String
+  author          User              @relation(fields: [authorId], references: [id])
+  localizations   PressReleaseLocalization[]
+  media           Media[]
+
+  // Metadata
+  createdAt       DateTime          @default(now())
+  updatedAt       DateTime          @updatedAt
+
+  @@index([status])
+  @@index([publishedAt])
+  @@index([locale])
+}
+
+model PressReleaseLocalization {
+  id              String            @id @default(uuid())
+  pressReleaseId  String
+  pressRelease    PressRelease      @relation(fields: [pressReleaseId], references: [id], onDelete: Cascade)
+  locale          String
+  title           String
+  subtitle        String?
+  content         Json
+  excerpt         String?
+  createdAt       DateTime          @default(now())
+  updatedAt       DateTime          @updatedAt
+
+  @@unique([pressReleaseId, locale])
+  @@index([pressReleaseId])
+  @@index([locale])
+}
+
+// ============================================================================
+// Offer Management
+// ============================================================================
+
+model Offer {
+  id              String            @id @default(uuid())
+  code            String            @unique
+  name            String
+  description     String?
+  type            OfferType
+  status          OfferStatus       @default(DRAFT)
+
+  // Discount details
+  discountType    DiscountType
+  discountValue   Float             // Percentage or fixed amount
+
+  // Validity
+  startDate       DateTime
+  endDate         DateTime
+  bookingWindow   Json?             // Travel date restrictions
+
+  // Usage limits
+  usageLimit      Int?              // Total uses
+  usagePerUser    Int?              // Per user limit
+  currentUsage    Int               @default(0)
+
+  // Targeting
+  targetRules     Json?             // Personalization rules
+  routes          String[]          // Applicable routes
+  fareClasses     String[]          // Applicable fare classes
+
+  // Bundle info (if applicable)
+  bundleItems     Json?
+
+  // Relationships
+  createdBy       String
+  creator         User              @relation(fields: [createdBy], references: [id])
+  usages          OfferUsage[]
+
+  // Metadata
+  createdAt       DateTime          @default(now())
+  updatedAt       DateTime          @updatedAt
+
+  @@index([code])
+  @@index([status])
+  @@index([startDate, endDate])
+}
+
+model OfferUsage {
+  id              String            @id @default(uuid())
+  offerId         String
+  offer           Offer             @relation(fields: [offerId], references: [id], onDelete: Cascade)
+  userId          String
+  bookingId       String?
+  discountAmount  Float
+  usedAt          DateTime          @default(now())
+
+  @@index([offerId])
+  @@index([userId])
+}
+
+// ============================================================================
+// Media Management
+// ============================================================================
+
+model Media {
+  id              String            @id @default(uuid())
+  filename        String
+  originalName    String
+  mimeType        String
+  size            Int               // bytes
+  width           Int?
+  height          Int?
+  duration        Int?              // For videos (seconds)
+
+  // Storage
+  url             String
+  thumbnailUrl    String?
+  cdnUrl          String?
+  storageKey      String            @unique
+  folder          String?
+
+  // Metadata
+  title           String?
+  altText         String?
+  caption         String?
+  tags            Tag[]
+
+  // Relationships
+  uploadedBy      String
+  uploader        User              @relation(fields: [uploadedBy], references: [id])
+  pages           Page[]
+  blogPosts       BlogPost[]
+  routes          Route[]
+  destinations    Destination[]
+  pressReleases   PressRelease[]
+
+  // Usage tracking
+  downloads       Int               @default(0)
+
+  // Metadata
+  createdAt       DateTime          @default(now())
+  updatedAt       DateTime          @updatedAt
+
+  @@index([uploadedBy])
+  @@index([mimeType])
+  @@index([folder])
+  @@index([createdAt])
+}
+
+// ============================================================================
+// Content Organization
+// ============================================================================
+
+model Tag {
+  id              String            @id @default(uuid())
+  name            String            @unique
+  slug            String            @unique
+  blogPosts       BlogPost[]
+  media           Media[]
+  createdAt       DateTime          @default(now())
+
+  @@index([slug])
+}
+
+model SeoMetadata {
+  id              String            @id @default(uuid())
+
+  // Basic SEO
+  title           String?
+  description     String?
+  keywords        String[]          @default([])
+
+  // Open Graph
+  ogTitle         String?
+  ogDescription   String?
+  ogImage         String?
+  ogType          String?           @default("website")
+
+  // Twitter Card
+  twitterCard     String?           @default("summary_large_image")
+  twitterTitle    String?
+  twitterDescription String?
+  twitterImage    String?
+
+  // Advanced
+  canonicalUrl    String?
+  robots          String?           @default("index, follow")
+  structuredData  Json?             // Schema.org JSON-LD
+
+  // Relationships
+  pageId          String?           @unique
+  page            Page?             @relation(fields: [pageId], references: [id], onDelete: Cascade)
+  blogPostId      String?           @unique
+  blogPost        BlogPost?         @relation(fields: [blogPostId], references: [id], onDelete: Cascade)
+  routeId         String?           @unique
+  route           Route?            @relation(fields: [routeId], references: [id], onDelete: Cascade)
+  destinationId   String?           @unique
+  destination     Destination?      @relation(fields: [destinationId], references: [id], onDelete: Cascade)
+  pressReleaseId  String?           @unique
+  pressRelease    PressRelease?     @relation(fields: [pressReleaseId], references: [id], onDelete: Cascade)
+
+  createdAt       DateTime          @default(now())
+  updatedAt       DateTime          @updatedAt
+}
+
+// ============================================================================
+// User & Permissions
+// ============================================================================
+
+model User {
+  id              String            @id @default(uuid())
+  email           String            @unique
+  name            String
+  avatar          String?
+  role            UserRole          @default(VIEWER)
+  permissions     String[]          @default([])
+
+  // Authentication
+  passwordHash    String?
+  lastLogin       DateTime?
+
+  // Relationships
+  pages           Page[]
+  blogPosts       BlogPost[]
+  banners         Banner[]
+  pressReleases   PressRelease[]
+  offers          Offer[]
+  media           Media[]
+  activityLogs    ActivityLog[]
+  comments        Comment[]
+
+  // Metadata
+  createdAt       DateTime          @default(now())
+  updatedAt       DateTime          @updatedAt
+
+  @@index([email])
+  @@index([role])
+}
+
+// ============================================================================
+// Workflow & Collaboration
+// ============================================================================
+
+model Comment {
+  id              String            @id @default(uuid())
+  content         String
+  contentType     String            // "page", "blog", etc.
+  contentId       String
+  resolved        Boolean           @default(false)
+
+  // Relationships
+  authorId        String
+  author          User              @relation(fields: [authorId], references: [id])
+  parentId        String?
+  parent          Comment?          @relation("CommentReplies", fields: [parentId], references: [id], onDelete: Cascade)
+  replies         Comment[]         @relation("CommentReplies")
+
+  // Metadata
+  createdAt       DateTime          @default(now())
+  updatedAt       DateTime          @updatedAt
+
+  @@index([contentType, contentId])
+  @@index([authorId])
+}
+
+model ActivityLog {
+  id              String            @id @default(uuid())
+  action          String            // "create", "update", "publish", etc.
+  entityType      String            // "page", "blog", etc.
+  entityId        String
+  changes         Json?             // What changed
+  ipAddress       String?
+  userAgent       String?
+
+  // Relationships
+  userId          String
+  user            User              @relation(fields: [userId], references: [id])
+
+  // Metadata
+  createdAt       DateTime          @default(now())
+
+  @@index([userId])
+  @@index([entityType, entityId])
+  @@index([createdAt])
+}
+
+// ============================================================================
+// Webhooks
+// ============================================================================
+
+model Webhook {
+  id              String            @id @default(uuid())
+  name            String
+  url             String
+  events          String[]          // Array of event types
+  secret          String?
+  active          Boolean           @default(true)
+
+  // Retry configuration
+  retryAttempts   Int               @default(3)
+  timeout         Int               @default(5000)
+
+  // Relationships
+  deliveries      WebhookDelivery[]
+
+  // Metadata
+  createdAt       DateTime          @default(now())
+  updatedAt       DateTime          @updatedAt
+
+  @@index([active])
+}
+
+model WebhookDelivery {
+  id              String            @id @default(uuid())
+  webhookId       String
+  webhook         Webhook           @relation(fields: [webhookId], references: [id], onDelete: Cascade)
+  event           String
+  payload         Json
+  responseStatus  Int?
+  responseBody    String?
+  attempts        Int               @default(1)
+  success         Boolean           @default(false)
+
+  // Metadata
+  createdAt       DateTime          @default(now())
+  completedAt     DateTime?
+
+  @@index([webhookId])
+  @@index([success])
+  @@index([createdAt])
+}
+
+// ============================================================================
+// Enums
+// ============================================================================
+
+enum ContentStatus {
+  DRAFT
+  IN_REVIEW
+  APPROVED
+  PUBLISHED
+  ARCHIVED
+}
+
+enum BannerType {
+  HERO
+  STRIP
+  POPUP
+  SIDEBAR
+  INLINE
+}
+
+enum BannerPosition {
+  TOP
+  MIDDLE
+  BOTTOM
+  SIDEBAR_LEFT
+  SIDEBAR_RIGHT
+}
+
+enum OfferType {
+  DISCOUNT
+  BUNDLE
+  FLASH_SALE
+  LOYALTY
+  SEASONAL
+}
+
+enum OfferStatus {
+  DRAFT
+  ACTIVE
+  PAUSED
+  EXPIRED
+}
+
+enum DiscountType {
+  PERCENTAGE
+  FIXED_AMOUNT
+  FREE_ITEM
+}
+
+enum UserRole {
+  VIEWER
+  EDITOR
+  PUBLISHER
+  ADMIN
+}
