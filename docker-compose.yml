@@ -1,0 +1,75 @@
+version: '3.8'
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: airline-ops-postgres
+    environment:
+      POSTGRES_USER: airlineops
+      POSTGRES_PASSWORD: devpassword123
+      POSTGRES_DB: airline_ops
+    ports:
+      - '5432:5432'
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./scripts/init-db.sql:/docker-entrypoint-initdb.d/init.sql
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U airlineops']
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - airline-ops-network
+
+  redis:
+    image: redis:7-alpine
+    container_name: airline-ops-redis
+    ports:
+      - '6379:6379'
+    volumes:
+      - redis_data:/data
+    command: redis-server --appendonly yes
+    healthcheck:
+      test: ['CMD', 'redis-cli', 'ping']
+      interval: 10s
+      timeout: 3s
+      retries: 5
+    networks:
+      - airline-ops-network
+
+  rabbitmq:
+    image: rabbitmq:3.12-management-alpine
+    container_name: airline-ops-rabbitmq
+    environment:
+      RABBITMQ_DEFAULT_USER: airlineops
+      RABBITMQ_DEFAULT_PASS: devpassword123
+    ports:
+      - '5672:5672'
+      - '15672:15672'
+    volumes:
+      - rabbitmq_data:/var/lib/rabbitmq
+    healthcheck:
+      test: ['CMD', 'rabbitmq-diagnostics', 'ping']
+      interval: 30s
+      timeout: 10s
+      retries: 5
+    networks:
+      - airline-ops-network
+
+  mailhog:
+    image: mailhog/mailhog:latest
+    container_name: airline-ops-mailhog
+    ports:
+      - '1025:1025'
+      - '8025:8025'
+    networks:
+      - airline-ops-network
+
+volumes:
+  postgres_data:
+  redis_data:
+  rabbitmq_data:
+
+networks:
+  airline-ops-network:
+    driver: bridge
