@@ -1,0 +1,1035 @@
+// GDS Integration Service Schema
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ============================================================================
+// GDS CONNECTIVITY
+// ============================================================================
+
+model GdsProvider {
+  id                    String                @id @default(uuid())
+  code                  String                @unique // AMADEUS, SABRE, TRAVELPORT, etc.
+  name                  String
+  type                  GdsType
+  endpoint              String
+  backupEndpoint        String?
+  isPrimary             Boolean               @default(false)
+  isActive              Boolean               @default(true)
+  airlineCode           String
+  officeId              String
+  pseudoCityCode        String?
+  credentials           Json                  // API keys, certificates
+  connectionTimeout     Int                   @default(30000)
+  readTimeout           Int                   @default(60000)
+  maxRetries            Int                   @default(3)
+  retryDelay            Int                   @default(1000)
+  circuitBreakerThreshold Int                 @default(50)
+  certificationDate     DateTime?
+  certificationExpiry   DateTime?
+  settings              Json?
+  createdAt             DateTime              @default(now())
+  updatedAt             DateTime              @updatedAt
+
+  messages              GdsMessage[]
+  queues                GdsQueue[]
+  availability          GdsAvailabilityCache[]
+  pnrMappings           PnrMapping[]
+  tickets               GdsTicket[]
+  settlements           GdsSettlement[]
+  healthChecks          GdsHealthCheck[]
+  metrics               GdsMetric[]
+
+  @@index([code])
+  @@index([airlineCode])
+  @@index([isActive])
+}
+
+enum GdsType {
+  AMADEUS
+  SABRE
+  TRAVELPORT_GALILEO
+  TRAVELPORT_APOLLO
+  TRAVELPORT_WORLDSPAN
+  TRAVELSKY
+  INFINI
+  AXESS
+  ABACUS
+}
+
+// ============================================================================
+// MESSAGE PROCESSING
+// ============================================================================
+
+model GdsMessage {
+  id                    String                @id @default(uuid())
+  gdsProviderId         String
+  messageType           MessageType
+  messageFormat         MessageFormat
+  direction             MessageDirection
+  rawMessage            String                @db.Text
+  parsedMessage         Json?
+  messageId             String?               @unique
+  sessionId             String?
+  correlationId         String?
+  requestType           String?               // PAOREQ, ITAREQ, TKTREQ, etc.
+  responseCode          String?
+  responseMessage       String?
+  status                MessageStatus
+  processingTime        Int?                  // milliseconds
+  retryCount            Int                   @default(0)
+  errorMessage          String?               @db.Text
+  errorCode             String?
+  metadata              Json?
+  sentAt                DateTime?
+  receivedAt            DateTime?
+  processedAt           DateTime?
+  createdAt             DateTime              @default(now())
+
+  gdsProvider           GdsProvider           @relation(fields: [gdsProviderId], references: [id])
+  pnrMapping            PnrMapping?           @relation(fields: [pnrMappingId], references: [id])
+  pnrMappingId          String?
+
+  @@index([gdsProviderId])
+  @@index([messageType])
+  @@index([status])
+  @@index([createdAt])
+  @@index([sessionId])
+  @@index([correlationId])
+}
+
+enum MessageType {
+  TYPE_A_INTERACTIVE      // Real-time interactive messages
+  TYPE_B_OPERATIONAL      // Batch operational messages
+  EDIFACT                 // UN/EDIFACT messages
+}
+
+enum MessageFormat {
+  XML
+  SOAP
+  JSON
+  EDIFACT
+  PROPRIETARY
+}
+
+enum MessageDirection {
+  INBOUND
+  OUTBOUND
+}
+
+enum MessageStatus {
+  PENDING
+  SENT
+  RECEIVED
+  PROCESSING
+  PROCESSED
+  FAILED
+  RETRY
+  TIMEOUT
+  CANCELLED
+}
+
+// ============================================================================
+// AVAILABILITY DISTRIBUTION
+// ============================================================================
+
+model GdsAvailabilityCache {
+  id                    String                @id @default(uuid())
+  gdsProviderId         String
+  origin                String
+  destination           String
+  departureDate         DateTime
+  returnDate            DateTime?
+  cabinClass            String
+  passengerCount        Int
+  availabilityData      Json                  // Cached availability response
+  statusCodes           Json                  // A1-A9, L, R, Q availability codes
+  marriedSegments       Json?                 // Married segment logic
+  minimumConnectTime    Int?
+  cacheKey              String                @unique
+  hitCount              Int                   @default(0)
+  lastAccessedAt        DateTime              @default(now())
+  expiresAt             DateTime
+  createdAt             DateTime              @default(now())
+
+  gdsProvider           GdsProvider           @relation(fields: [gdsProviderId], references: [id])
+
+  @@index([gdsProviderId])
+  @@index([origin, destination, departureDate])
+  @@index([cacheKey])
+  @@index([expiresAt])
+}
+
+// ============================================================================
+// PNR MANAGEMENT
+// ============================================================================
+
+model PnrMapping {
+  id                    String                @id @default(uuid())
+  gdsProviderId         String
+  gdsPnr                String                // GDS PNR locator (6 characters)
+  nativePnr             String                // Native system PNR locator
+  pnrType               PnrType
+  status                PnrStatus
+  lastSyncAt            DateTime?
+  syncDirection         SyncDirection?
+  pnrData               Json                  // Full PNR content
+  passengerCount        Int
+  segmentCount          Int
+  hasTickets            Boolean               @default(false)
+  queueNumber           String?
+  queueCategory         String?
+  ownerOfficeId         String
+  creatorUserId         String?
+  lockedUntil           DateTime?
+  lockedBy              String?
+  version               Int                   @default(1)
+  createdAt             DateTime              @default(now())
+  updatedAt             DateTime              @updatedAt
+  deletedAt             DateTime?
+
+  gdsProvider           GdsProvider           @relation(fields: [gdsProviderId], references: [id])
+  messages              GdsMessage[]
+  pnrSegments           PnrSegment[]
+  pnrPassengers         PnrPassenger[]
+  specialServices       SpecialServiceRequest[]
+  otherServices         OtherServiceInfo[]
+  tickets               GdsTicket[]
+  modifications         PnrModification[]
+  queueActions          QueueAction[]
+
+  @@unique([gdsProviderId, gdsPnr])
+  @@index([gdsPnr])
+  @@index([nativePnr])
+  @@index([status])
+  @@index([queueNumber])
+}
+
+enum PnrType {
+  INDIVIDUAL
+  GROUP
+  SERIES
+}
+
+enum PnrStatus {
+  ACTIVE
+  TICKETED
+  CANCELLED
+  FLOWN
+  VOIDED
+  PENDING_SYNC
+  SYNC_FAILED
+}
+
+enum SyncDirection {
+  GDS_TO_NATIVE
+  NATIVE_TO_GDS
+  BIDIRECTIONAL
+}
+
+model PnrSegment {
+  id                    String                @id @default(uuid())
+  pnrMappingId          String
+  segmentNumber         Int
+  origin                String
+  destination           String
+  flightNumber          String
+  operatingCarrier      String
+  marketingCarrier      String
+  departureDate         DateTime
+  departureTime         String
+  arrivalDate           DateTime
+  arrivalTime           String
+  cabinClass            String
+  bookingClass          String
+  status                SegmentStatus
+  seatCount             Int
+  marriedSegmentId      String?
+  actionCode            String?               // IATA action codes
+  createdAt             DateTime              @default(now())
+  updatedAt             DateTime              @updatedAt
+
+  pnrMapping            PnrMapping            @relation(fields: [pnrMappingId], references: [id], onDelete: Cascade)
+
+  @@index([pnrMappingId])
+  @@index([flightNumber, departureDate])
+}
+
+enum SegmentStatus {
+  HK    // Holding Confirmed
+  HL    // Holding Waitlisted
+  KK    // Confirmed
+  KL    // Waitlisted
+  UC    // Unable to Confirm
+  UN    // Unable
+  NO    // No Action
+  TK    // Ticketed
+  IX    // Cancelled
+}
+
+model PnrPassenger {
+  id                    String                @id @default(uuid())
+  pnrMappingId          String
+  passengerNumber       Int
+  passengerType         String                // ADT, CHD, INF
+  title                 String?
+  firstName             String
+  lastName              String
+  dateOfBirth           DateTime?
+  gender                String?
+  frequentFlyerNumber   String?
+  frequentFlyerCarrier  String?
+  ticketNumber          String?
+  infantFirstName       String?
+  infantLastName        String?
+  infantDateOfBirth     DateTime?
+  createdAt             DateTime              @default(now())
+  updatedAt             DateTime              @updatedAt
+
+  pnrMapping            PnrMapping            @relation(fields: [pnrMappingId], references: [id], onDelete: Cascade)
+  specialServices       SpecialServiceRequest[]
+  tickets               GdsTicket[]
+
+  @@index([pnrMappingId])
+  @@index([lastName, firstName])
+}
+
+// ============================================================================
+// SPECIAL SERVICE REQUESTS (SSR)
+// ============================================================================
+
+model SpecialServiceRequest {
+  id                    String                @id @default(uuid())
+  pnrMappingId          String
+  pnrPassengerId        String?
+  ssrCode               String                // WCHR, BLND, VGML, etc.
+  ssrType               SsrType
+  freeText              String?
+  status                String
+  airlineCode           String?
+  segmentNumber         Int?
+  quantity              Int?                  @default(1)
+  createdAt             DateTime              @default(now())
+  updatedAt             DateTime              @updatedAt
+
+  pnrMapping            PnrMapping            @relation(fields: [pnrMappingId], references: [id], onDelete: Cascade)
+  passenger             PnrPassenger?         @relation(fields: [pnrPassengerId], references: [id], onDelete: Cascade)
+
+  @@index([pnrMappingId])
+  @@index([ssrCode])
+}
+
+enum SsrType {
+  MEAL
+  SEAT
+  BAGGAGE
+  ASSISTANCE
+  MEDICAL
+  DOCUMENTATION
+  SPORTS_EQUIPMENT
+  PET
+  OTHER
+}
+
+// ============================================================================
+// OTHER SERVICE INFORMATION (OSI)
+// ============================================================================
+
+model OtherServiceInfo {
+  id                    String                @id @default(uuid())
+  pnrMappingId          String
+  airlineCode           String
+  osiText               String                @db.Text
+  osiType               String?
+  createdAt             DateTime              @default(now())
+
+  pnrMapping            PnrMapping            @relation(fields: [pnrMappingId], references: [id], onDelete: Cascade)
+
+  @@index([pnrMappingId])
+}
+
+// ============================================================================
+// QUEUE MANAGEMENT
+// ============================================================================
+
+model GdsQueue {
+  id                    String                @id @default(uuid())
+  gdsProviderId         String
+  queueNumber           String
+  queueCategory         String?
+  queueName             String
+  description           String?
+  priority              Int                   @default(5)
+  autoProcessing        Boolean               @default(false)
+  processingInterval    Int?                  // minutes
+  lastProcessedAt       DateTime?
+  isActive              Boolean               @default(true)
+  createdAt             DateTime              @default(now())
+  updatedAt             DateTime              @updatedAt
+
+  gdsProvider           GdsProvider           @relation(fields: [gdsProviderId], references: [id])
+  queueActions          QueueAction[]
+
+  @@unique([gdsProviderId, queueNumber, queueCategory])
+  @@index([gdsProviderId])
+  @@index([queueNumber])
+}
+
+model QueueAction {
+  id                    String                @id @default(uuid())
+  queueId               String
+  pnrMappingId          String
+  actionType            QueueActionType
+  reason                String?
+  performedBy           String?
+  performedAt           DateTime              @default(now())
+
+  queue                 GdsQueue              @relation(fields: [queueId], references: [id])
+  pnrMapping            PnrMapping            @relation(fields: [pnrMappingId], references: [id])
+
+  @@index([queueId])
+  @@index([pnrMappingId])
+  @@index([performedAt])
+}
+
+enum QueueActionType {
+  PLACED
+  REMOVED
+  PROCESSED
+  TRANSFERRED
+}
+
+// ============================================================================
+// PNR MODIFICATIONS
+// ============================================================================
+
+model PnrModification {
+  id                    String                @id @default(uuid())
+  pnrMappingId          String
+  modificationType      ModificationType
+  oldValue              Json?
+  newValue              Json?
+  modifiedBy            String
+  reason                String?
+  status                String
+  approvalRequired      Boolean               @default(false)
+  approvedBy            String?
+  approvedAt            DateTime?
+  createdAt             DateTime              @default(now())
+
+  pnrMapping            PnrMapping            @relation(fields: [pnrMappingId], references: [id], onDelete: Cascade)
+
+  @@index([pnrMappingId])
+  @@index([modificationType])
+  @@index([createdAt])
+}
+
+enum ModificationType {
+  NAME_CHANGE
+  DATE_CHANGE
+  SEGMENT_ADD
+  SEGMENT_CANCEL
+  SSR_ADD
+  SSR_CANCEL
+  CONTACT_UPDATE
+  SPLIT_PNR
+  DIVIDE_PNR
+  REMARK_ADD
+}
+
+// ============================================================================
+// E-TICKETING
+// ============================================================================
+
+model GdsTicket {
+  id                    String                @id @default(uuid())
+  gdsProviderId         String
+  pnrMappingId          String
+  pnrPassengerId        String
+  ticketNumber          String                @unique // 13-digit
+  ticketType            TicketType
+  airlineCode           String                // 3-digit numeric
+  documentNumber        String                // 10-digit
+  checkDigit            String                // 1-digit
+  issueDate             DateTime
+  issueLocation         String
+  issuingAgent          String?
+  validatingCarrier     String
+  tourCode              String?
+  endorsements          String?               @db.Text
+  baseFare              Float
+  totalTax              Float
+  totalAmount           Float
+  currency              String
+  formOfPayment         String?
+  commissionAmount      Float?
+  commissionPercent     Float?
+  fareCalculation       String?               @db.Text
+  status                TicketStatus
+  isVoid                Boolean               @default(false)
+  voidedAt              DateTime?
+  voidedBy              String?
+  isRefunded            Boolean               @default(false)
+  refundedAt            DateTime?
+  refundAmount          Float?
+  isExchanged           Boolean               @default(false)
+  exchangedFor          String?               // New ticket number
+  exchangedAt           DateTime?
+  conjunctionTickets    String[]
+  createdAt             DateTime              @default(now())
+  updatedAt             DateTime              @updatedAt
+
+  gdsProvider           GdsProvider           @relation(fields: [gdsProviderId], references: [id])
+  pnrMapping            PnrMapping            @relation(fields: [pnrMappingId], references: [id])
+  passenger             PnrPassenger          @relation(fields: [pnrPassengerId], references: [id])
+  coupons               TicketCoupon[]
+  taxes                 TicketTax[]
+  emds                  ElectronicMiscDocument[]
+
+  @@index([gdsProviderId])
+  @@index([pnrMappingId])
+  @@index([ticketNumber])
+  @@index([status])
+  @@index([issueDate])
+}
+
+enum TicketType {
+  ETICKET
+  PAPER
+  AUTOMATED
+  MANUAL
+}
+
+enum TicketStatus {
+  OPEN
+  USED
+  REFUNDED
+  EXCHANGED
+  VOID
+  SUSPENDED
+  IRREGULAR
+}
+
+model TicketCoupon {
+  id                    String                @id @default(uuid())
+  ticketId              String
+  couponNumber          Int
+  couponStatus          CouponStatus
+  origin                String
+  destination           String
+  flightNumber          String
+  operatingCarrier      String
+  cabinClass            String
+  bookingClass          String
+  departureDate         DateTime
+  departureTime         String
+  arrivalDate           DateTime?
+  arrivalTime           String?
+  fareBasis             String
+  notValidBefore        DateTime?
+  notValidAfter         DateTime?
+  baggageAllowance      String?
+  checkedInAt           DateTime?
+  boardedAt             DateTime?
+  createdAt             DateTime              @default(now())
+  updatedAt             DateTime              @updatedAt
+
+  ticket                GdsTicket             @relation(fields: [ticketId], references: [id], onDelete: Cascade)
+
+  @@index([ticketId])
+  @@index([couponNumber])
+}
+
+enum CouponStatus {
+  OPEN                  // Not used
+  CHECKED_IN            // Passenger checked in
+  BOARDED               // Passenger boarded
+  FLOWN                 // Flight completed
+  SUSPENDED             // Suspended
+  REFUNDED              // Refunded
+  EXCHANGED             // Exchanged
+  VOID                  // Voided
+  AIRPORT_CONTROL       // At airport control
+  IRREGULAR             // Irregular operations
+}
+
+model TicketTax {
+  id                    String                @id @default(uuid())
+  ticketId              String
+  taxCode               String
+  taxName               String?
+  taxAmount             Float
+  currency              String
+  createdAt             DateTime              @default(now())
+
+  ticket                GdsTicket             @relation(fields: [ticketId], references: [id], onDelete: Cascade)
+
+  @@index([ticketId])
+}
+
+// ============================================================================
+// ELECTRONIC MISCELLANEOUS DOCUMENTS (EMD)
+// ============================================================================
+
+model ElectronicMiscDocument {
+  id                    String                @id @default(uuid())
+  ticketId              String?
+  pnrMappingId          String?
+  emdNumber             String                @unique // 13-digit
+  emdType               EmdType
+  airlineCode           String
+  issueDate             DateTime
+  reasonForIssuance     String
+  rficCode              String                // Reason for Issuance Code
+  rfiscCode             String?               // Reason for Issuance Sub Code
+  serviceType           String
+  description           String?
+  amount                Float
+  currency              String
+  status                EmdStatus
+  isVoid                Boolean               @default(false)
+  voidedAt              DateTime?
+  isRefunded            Boolean               @default(false)
+  refundedAt            DateTime?
+  refundAmount          Float?
+  associatedTicketNumber String?
+  createdAt             DateTime              @default(now())
+  updatedAt             DateTime              @updatedAt
+
+  ticket                GdsTicket?            @relation(fields: [ticketId], references: [id])
+
+  @@index([emdNumber])
+  @@index([emdType])
+  @@index([status])
+  @@index([issueDate])
+}
+
+enum EmdType {
+  EMD_S     // EMD-S (Standalone) for services not linked to flight
+  EMD_A     // EMD-A (Associated) for ancillary services
+}
+
+enum EmdStatus {
+  OPEN
+  USED
+  REFUNDED
+  VOID
+  EXCHANGED
+}
+
+// ============================================================================
+// FARE DISTRIBUTION
+// ============================================================================
+
+model FareDistribution {
+  id                    String                @id @default(uuid())
+  fareType              FareDistType
+  airlineCode           String
+  origin                String
+  destination           String
+  fareClass             String
+  fareBasis             String
+  fareAmount            Float
+  currency              String
+  validFrom             DateTime
+  validTo               DateTime
+  travelDateStart       DateTime?
+  travelDateEnd         DateTime?
+  bookingDateStart      DateTime?
+  bookingDateEnd        DateTime?
+  minimumStay           String?
+  maximumStay           String?
+  advancePurchase       Int?
+  penalties             Json?                 // Change, cancellation penalties
+  fareRules             String?               @db.Text
+  distributedToGds      String[]              // Array of GDS codes
+  isPrivate             Boolean               @default(false)
+  corporateId           String?
+  agencyId              String?
+  atpcoFileReference    String?
+  status                FareStatus
+  lastSyncedAt          DateTime?
+  createdAt             DateTime              @default(now())
+  updatedAt             DateTime              @updatedAt
+
+  @@index([airlineCode])
+  @@index([origin, destination])
+  @@index([fareType])
+  @@index([validFrom, validTo])
+}
+
+enum FareDistType {
+  PUBLIC
+  PRIVATE
+  CORPORATE
+  NEGOTIATED
+  PROMOTIONAL
+  NET
+}
+
+enum FareStatus {
+  ACTIVE
+  INACTIVE
+  PENDING_APPROVAL
+  EXPIRED
+}
+
+// ============================================================================
+// SETTLEMENT & REPORTING
+// ============================================================================
+
+model GdsSettlement {
+  id                    String                @id @default(uuid())
+  gdsProviderId         String
+  settlementType        SettlementType
+  settlementPeriod      String                // "2024-01" for monthly
+  startDate             DateTime
+  endDate               DateTime
+  totalSales            Float
+  totalCommission       Float
+  totalTax              Float
+  totalRefunds          Float
+  totalAdm              Float                 // Agency Debit Memo
+  totalAcm              Float                 // Agency Credit Memo
+  netAmount             Float
+  currency              String
+  recordCount           Int
+  status                SettlementStatus
+  reportFile            String?
+  submittedAt           DateTime?
+  approvedAt            DateTime?
+  paidAt                DateTime?
+  createdAt             DateTime              @default(now())
+  updatedAt             DateTime              @updatedAt
+
+  gdsProvider           GdsProvider           @relation(fields: [gdsProviderId], references: [id])
+  salesRecords          SalesRecord[]
+  admRecords            AdmRecord[]
+
+  @@index([gdsProviderId])
+  @@index([settlementPeriod])
+  @@index([status])
+}
+
+enum SettlementType {
+  BSP       // Billing and Settlement Plan
+  ARC       // Airlines Reporting Corporation
+  DIRECT    // Direct settlement
+}
+
+enum SettlementStatus {
+  DRAFT
+  PENDING
+  SUBMITTED
+  APPROVED
+  REJECTED
+  PAID
+  DISPUTED
+}
+
+model SalesRecord {
+  id                    String                @id @default(uuid())
+  settlementId          String
+  transactionDate       DateTime
+  ticketNumber          String
+  passengerName         String
+  route                 String
+  baseFare              Float
+  taxAmount             Float
+  totalAmount           Float
+  commissionAmount      Float
+  commissionPercent     Float
+  agencyCode            String
+  agencyName            String
+  formOfPayment         String
+  transactionType       String                // Sale, Refund, Exchange
+  createdAt             DateTime              @default(now())
+
+  settlement            GdsSettlement         @relation(fields: [settlementId], references: [id], onDelete: Cascade)
+
+  @@index([settlementId])
+  @@index([ticketNumber])
+  @@index([transactionDate])
+  @@index([agencyCode])
+}
+
+model AdmRecord {
+  id                    String                @id @default(uuid())
+  settlementId          String
+  admNumber             String                @unique
+  admType               AdmType
+  agencyCode            String
+  agencyName            String
+  issueDate             DateTime
+  reason                String
+  ticketNumber          String?
+  amount                Float
+  currency              String
+  status                AdmStatus
+  disputedAt            DateTime?
+  disputeReason         String?               @db.Text
+  resolvedAt            DateTime?
+  resolution            String?
+  createdAt             DateTime              @default(now())
+  updatedAt             DateTime              @updatedAt
+
+  settlement            GdsSettlement         @relation(fields: [settlementId], references: [id])
+
+  @@index([settlementId])
+  @@index([admNumber])
+  @@index([agencyCode])
+  @@index([status])
+}
+
+enum AdmType {
+  ADM       // Agency Debit Memo
+  ACM       // Agency Credit Memo
+}
+
+enum AdmStatus {
+  ISSUED
+  DISPUTED
+  ACCEPTED
+  REJECTED
+  RESOLVED
+  PAID
+}
+
+// ============================================================================
+// AGENCY MANAGEMENT
+// ============================================================================
+
+model TravelAgency {
+  id                    String                @id @default(uuid())
+  agencyCode            String                @unique // IATA number
+  agencyName            String
+  legalName             String?
+  iataNumber            String                @unique
+  arcNumber             String?
+  country               String
+  city                  String
+  address               String?
+  phone                 String?
+  email                 String?
+  website               String?
+  status                AgencyStatus
+  commissionRate        Float?
+  preferredGds          String?
+  gdsAccess             Json                  // {AMADEUS: {officeId, pcc}, SABRE: {...}}
+  creditLimit           Float?
+  currentBalance        Float                 @default(0)
+  isOnCredit            Boolean               @default(false)
+  contractStartDate     DateTime?
+  contractEndDate       DateTime?
+  settings              Json?
+  createdAt             DateTime              @default(now())
+  updatedAt             DateTime              @updatedAt
+  deletedAt             DateTime?
+
+  users                 AgencyUser[]
+  privateFares          PrivateFare[]
+  commissionOverrides   CommissionOverride[]
+
+  @@index([agencyCode])
+  @@index([iataNumber])
+  @@index([status])
+}
+
+enum AgencyStatus {
+  ACTIVE
+  SUSPENDED
+  TERMINATED
+  PENDING_APPROVAL
+}
+
+model AgencyUser {
+  id                    String                @id @default(uuid())
+  agencyId              String
+  userId                String                @unique
+  email                 String                @unique
+  firstName             String
+  lastName              String
+  role                  AgencyRole
+  permissions           String[]
+  isActive              Boolean               @default(true)
+  lastLoginAt           DateTime?
+  createdAt             DateTime              @default(now())
+  updatedAt             DateTime              @updatedAt
+
+  agency                TravelAgency          @relation(fields: [agencyId], references: [id])
+
+  @@index([agencyId])
+  @@index([email])
+}
+
+enum AgencyRole {
+  OWNER
+  MANAGER
+  AGENT
+  VIEWER
+}
+
+model PrivateFare {
+  id                    String                @id @default(uuid())
+  agencyId              String
+  airlineCode           String
+  origin                String
+  destination           String
+  fareClass             String
+  fareBasis             String
+  discountPercent       Float?
+  discountAmount        Float?
+  validFrom             DateTime
+  validTo               DateTime
+  minimumPax            Int?
+  maximumPax            Int?
+  terms                 String?               @db.Text
+  isActive              Boolean               @default(true)
+  createdAt             DateTime              @default(now())
+  updatedAt             DateTime              @updatedAt
+
+  agency                TravelAgency          @relation(fields: [agencyId], references: [id])
+
+  @@index([agencyId])
+  @@index([airlineCode])
+  @@index([origin, destination])
+}
+
+model CommissionOverride {
+  id                    String                @id @default(uuid())
+  agencyId              String
+  airlineCode           String
+  routePattern          String?               // e.g., "US-*" for US domestic
+  bookingClass          String?
+  commissionPercent     Float
+  validFrom             DateTime
+  validTo               DateTime
+  isActive              Boolean               @default(true)
+  createdAt             DateTime              @default(now())
+
+  agency                TravelAgency          @relation(fields: [agencyId], references: [id])
+
+  @@index([agencyId])
+  @@index([airlineCode])
+}
+
+// ============================================================================
+// MONITORING & HEALTH
+// ============================================================================
+
+model GdsHealthCheck {
+  id                    String                @id @default(uuid())
+  gdsProviderId         String
+  checkType             HealthCheckType
+  status                HealthStatus
+  responseTime          Int?                  // milliseconds
+  errorMessage          String?
+  metadata              Json?
+  checkedAt             DateTime              @default(now())
+
+  gdsProvider           GdsProvider           @relation(fields: [gdsProviderId], references: [id])
+
+  @@index([gdsProviderId])
+  @@index([status])
+  @@index([checkedAt])
+}
+
+enum HealthCheckType {
+  CONNECTIVITY
+  AUTHENTICATION
+  AVAILABILITY_REQUEST
+  BOOKING_REQUEST
+  PNR_RETRIEVAL
+  TICKETING
+  QUEUE_ACCESS
+}
+
+enum HealthStatus {
+  HEALTHY
+  DEGRADED
+  DOWN
+  TIMEOUT
+  ERROR
+}
+
+model GdsMetric {
+  id                    String                @id @default(uuid())
+  gdsProviderId         String
+  metricType            MetricType
+  metricName            String
+  metricValue           Float
+  unit                  String?
+  dimensions            Json?                 // Additional context
+  recordedAt            DateTime              @default(now())
+
+  gdsProvider           GdsProvider           @relation(fields: [gdsProviderId], references: [id])
+
+  @@index([gdsProviderId])
+  @@index([metricType])
+  @@index([recordedAt])
+}
+
+enum MetricType {
+  MESSAGE_COUNT
+  RESPONSE_TIME
+  ERROR_RATE
+  AVAILABILITY_HIT_RATE
+  BOOKING_COUNT
+  TICKET_COUNT
+  REVENUE
+  COMMISSION
+  QUEUE_DEPTH
+  CACHE_HIT_RATE
+}
+
+// ============================================================================
+// EDIFACT MESSAGE PROCESSING
+// ============================================================================
+
+model EdifactMessage {
+  id                    String                @id @default(uuid())
+  messageType           EdifactMessageType
+  messageVersion        String
+  messageReference      String                @unique
+  interchangeRef        String?
+  sender                String
+  recipient             String
+  direction             MessageDirection
+  rawMessage            String                @db.Text
+  parsedMessage         Json?
+  validationStatus      ValidationStatus
+  validationErrors      Json?
+  processingStatus      MessageStatus
+  processingErrors      String?               @db.Text
+  retryCount            Int                   @default(0)
+  receivedAt            DateTime?
+  processedAt           DateTime?
+  acknowledgedAt        DateTime?
+  createdAt             DateTime              @default(now())
+
+  @@index([messageType])
+  @@index([messageReference])
+  @@index([processingStatus])
+  @@index([createdAt])
+}
+
+enum EdifactMessageType {
+  PAXLST    // Passenger List Message
+  IFTMBC    // Booking Confirmation
+  IFTMBF    // Firm Booking
+  IFTMCS    // Space Cancellation
+  CUSRES    // Customs Response
+  CUSCAR    // Customs Cargo
+}
+
+enum ValidationStatus {
+  VALID
+  INVALID
+  WARNING
+  PENDING
+}
