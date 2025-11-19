@@ -1,0 +1,1437 @@
+// Airport Integration Service Schema
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ============================================================================
+// AIRPORT CONFIGURATION
+// ============================================================================
+
+model Airport {
+  id                    String                @id @default(uuid())
+  iataCode              String                @unique
+  icaoCode              String                @unique
+  name                  String
+  city                  String
+  country               String
+  countryCode           String                // ISO 2-letter
+  timezone              String
+  latitude              Float
+  longitude             Float
+  elevation             Int                   // Feet above sea level
+  isDomestic            Boolean               @default(false)
+  isInternational       Boolean               @default(true)
+  hasCustoms            Boolean               @default(false)
+  hasImmigration        Boolean               @default(false)
+  cuteProvider          CuteProvider?
+  cuppsProvider         String?
+  cussVersion           String?               // e.g., "2.0"
+  bhsProvider           String?
+  aodobProvider         String?
+  sitaAddress           String?               // SITA Type B address
+  settings              Json?
+  isActive              Boolean               @default(true)
+  createdAt             DateTime              @default(now())
+  updatedAt             DateTime              @updatedAt
+
+  terminals             Terminal[]
+  gates                 Gate[]
+  carousels             BaggageCarousel[]
+  kiosks                SelfServiceKiosk[]
+  bagDrops              SelfServiceBagDrop[]
+  biometricGates        BiometricGate[]
+  fidsDisplays          FidsDisplay[]
+  flights               AirportFlight[]
+  baggageMessages       BaggageMessage[]
+  sitaMessages          SitaMessage[]
+
+  @@index([iataCode])
+  @@index([icaoCode])
+}
+
+enum CuteProvider {
+  SITA
+  ARINC
+  ROCKWELL_COLLINS
+  AMADEUS
+  RESA
+  CUSTOM
+}
+
+model Terminal {
+  id                    String                @id @default(uuid())
+  airportId             String
+  terminalCode          String
+  terminalName          String
+  terminalType          TerminalType
+  isDomestic            Boolean               @default(true)
+  isInternational       Boolean               @default(false)
+  hasCustoms            Boolean               @default(false)
+  hasImmigration        Boolean               @default(false)
+  checkInCounterStart   String?
+  checkInCounterEnd     String?
+  gatePrefix            String?
+  isActive              Boolean               @default(true)
+  createdAt             DateTime              @default(now())
+  updatedAt             DateTime              @updatedAt
+
+  airport               Airport               @relation(fields: [airportId], references: [id])
+  gates                 Gate[]
+  checkInCounters       CheckInCounter[]
+  securityLanes         SecurityLane[]
+
+  @@unique([airportId, terminalCode])
+  @@index([airportId])
+}
+
+enum TerminalType {
+  DOMESTIC
+  INTERNATIONAL
+  MIXED
+  REGIONAL
+  LOW_COST
+}
+
+// ============================================================================
+// COMMON-USE PLATFORM (CUTE/CUPPS/CUSS)
+// ============================================================================
+
+model CuteSession {
+  id                    String                @id @default(uuid())
+  sessionId             String                @unique
+  workstationId         String
+  airlineCode           String
+  agentId               String
+  terminalId            String?
+  counterNumber         String?
+  sessionType           CuteSessionType
+  startedAt             DateTime              @default(now())
+  endedAt               DateTime?
+  duration              Int?                  // seconds
+  transactionCount      Int                   @default(0)
+  status                SessionStatus
+  ipAddress             String?
+  metadata              Json?
+
+  transactions          CuteTransaction[]
+
+  @@index([sessionId])
+  @@index([workstationId])
+  @@index([airlineCode])
+  @@index([status])
+}
+
+enum CuteSessionType {
+  CHECK_IN
+  BOARDING
+  TICKETING
+  BAGGAGE
+  CUSTOMER_SERVICE
+}
+
+enum SessionStatus {
+  ACTIVE
+  IDLE
+  DISCONNECTED
+  TERMINATED
+  TIMEOUT
+}
+
+model CuteTransaction {
+  id                    String                @id @default(uuid())
+  sessionId             String
+  transactionType       CuteTransactionType
+  transactionId         String                @unique
+  pnr                   String?
+  passengerName         String?
+  flightNumber          String?
+  requestData           Json?
+  responseData          Json?
+  status                TransactionStatus
+  errorCode             String?
+  errorMessage          String?
+  processingTime        Int?                  // milliseconds
+  createdAt             DateTime              @default(now())
+
+  session               CuteSession           @relation(fields: [sessionId], references: [id])
+
+  @@index([sessionId])
+  @@index([transactionType])
+  @@index([pnr])
+}
+
+enum CuteTransactionType {
+  CHECK_IN
+  SEAT_ASSIGNMENT
+  BAGGAGE_TAG
+  BOARDING_PASS
+  PASSENGER_LOOKUP
+  FLIGHT_LOOKUP
+  SPECIAL_SERVICE
+  PAYMENT
+}
+
+enum TransactionStatus {
+  SUCCESS
+  FAILED
+  PENDING
+  TIMEOUT
+  CANCELLED
+}
+
+model CheckInCounter {
+  id                    String                @id @default(uuid())
+  terminalId            String
+  counterNumber         String
+  counterType           CounterType
+  isPremium             Boolean               @default(false)
+  isAccessible          Boolean               @default(false)
+  assignedAirline       String?
+  assignedFlight        String?
+  status                CounterStatus
+  cuteWorkstationId     String?
+  currentSessionId      String?
+  lastActivityAt        DateTime?
+  createdAt             DateTime              @default(now())
+  updatedAt             DateTime              @updatedAt
+
+  terminal              Terminal              @relation(fields: [terminalId], references: [id])
+
+  @@unique([terminalId, counterNumber])
+  @@index([terminalId])
+  @@index([status])
+  @@index([assignedAirline])
+}
+
+enum CounterType {
+  STANDARD
+  PREMIUM
+  SELF_SERVICE
+  BAG_DROP
+  ACCESSIBLE
+  GROUP
+}
+
+enum CounterStatus {
+  AVAILABLE
+  OCCUPIED
+  OFFLINE
+  MAINTENANCE
+  RESERVED
+}
+
+// ============================================================================
+// SELF-SERVICE KIOSKS (CUSS 2.0)
+// ============================================================================
+
+model SelfServiceKiosk {
+  id                    String                @id @default(uuid())
+  airportId             String
+  kioskId               String                @unique
+  kioskType             KioskType
+  location              String
+  terminalCode          String?
+  cussVersion           String                @default("2.0")
+  manufacturer          String?
+  model                 String?
+  serialNumber          String?
+  ipAddress             String?
+  capabilities          Json                  // {boardingPass, bagTag, payment, biometric, etc.}
+  supportedAirlines     String[]
+  supportedLanguages    String[]
+  hasAccessibility      Boolean               @default(false)
+  hasPrinter            Boolean               @default(true)
+  hasBagTagPrinter      Boolean               @default(false)
+  hasPaymentTerminal    Boolean               @default(false)
+  hasBiometric          Boolean               @default(false)
+  status                KioskStatus
+  lastHealthCheck       DateTime?
+  lastMaintenanceAt     DateTime?
+  paperLevel            Int?                  // Percentage
+  errorCode             String?
+  errorMessage          String?
+  isActive              Boolean               @default(true)
+  createdAt             DateTime              @default(now())
+  updatedAt             DateTime              @updatedAt
+
+  airport               Airport               @relation(fields: [airportId], references: [id])
+  sessions              KioskSession[]
+
+  @@index([airportId])
+  @@index([kioskId])
+  @@index([status])
+}
+
+enum KioskType {
+  CHECK_IN
+  BAG_TAG
+  HYBRID
+  INFORMATION
+}
+
+enum KioskStatus {
+  AVAILABLE
+  IN_USE
+  OUT_OF_SERVICE
+  OUT_OF_PAPER
+  OFFLINE
+  MAINTENANCE
+  ERROR
+}
+
+model KioskSession {
+  id                    String                @id @default(uuid())
+  kioskId               String
+  sessionId             String                @unique
+  airlineCode           String?
+  pnr                   String?
+  lastName              String?
+  startedAt             DateTime              @default(now())
+  endedAt               DateTime?
+  duration              Int?                  // seconds
+  language              String                @default("en")
+  steps                 Json?                 // Track user journey
+  status                KioskSessionStatus
+  outcome               KioskOutcome?
+  errorMessage          String?
+  boardingPassesPrinted Int                   @default(0)
+  bagTagsPrinted        Int                   @default(0)
+  paymentAmount         Float?
+  metadata              Json?
+
+  kiosk                 SelfServiceKiosk      @relation(fields: [kioskId], references: [id])
+
+  @@index([kioskId])
+  @@index([sessionId])
+  @@index([pnr])
+  @@index([startedAt])
+}
+
+enum KioskSessionStatus {
+  ACTIVE
+  COMPLETED
+  ABANDONED
+  ERROR
+  TIMEOUT
+}
+
+enum KioskOutcome {
+  SUCCESS
+  ABANDONED
+  ERROR
+  TIMEOUT
+  REFERRED_TO_AGENT
+}
+
+// ============================================================================
+// SELF-SERVICE BAG DROP (SSBD)
+// ============================================================================
+
+model SelfServiceBagDrop {
+  id                    String                @id @default(uuid())
+  airportId             String
+  bagDropId             String                @unique
+  location              String
+  terminalCode          String?
+  manufacturer          String?
+  model                 String?
+  serialNumber          String?
+  ipAddress             String?
+  hasWeightScale        Boolean               @default(true)
+  hasDimensionCapture   Boolean               @default(true)
+  hasConveyor           Boolean               @default(true)
+  maxWeight             Float                 @default(32.0) // kg
+  weightTolerance       Float                 @default(0.5)  // kg
+  supportedAirlines     String[]
+  status                BagDropStatus
+  lastHealthCheck       DateTime?
+  lastMaintenanceAt     DateTime?
+  errorCode             String?
+  errorMessage          String?
+  isActive              Boolean               @default(true)
+  createdAt             DateTime              @default(now())
+  updatedAt             DateTime              @updatedAt
+
+  airport               Airport               @relation(fields: [airportId], references: [id])
+  transactions          BagDropTransaction[]
+
+  @@index([airportId])
+  @@index([bagDropId])
+  @@index([status])
+}
+
+enum BagDropStatus {
+  AVAILABLE
+  IN_USE
+  JAM
+  OVERWEIGHT
+  OFFLINE
+  MAINTENANCE
+  ERROR
+}
+
+model BagDropTransaction {
+  id                    String                @id @default(uuid())
+  bagDropId             String
+  transactionId         String                @unique
+  pnr                   String
+  passengerName         String
+  flightNumber          String
+  flightDate            DateTime
+  bagTagNumber          String
+  weightCaptured        Float                 // kg
+  widthCaptured         Float?                // cm
+  heightCaptured        Float?                // cm
+  depthCaptured         Float?                // cm
+  isOverweight          Boolean               @default(false)
+  isOversized           Boolean               @default(false)
+  excessWeightCharged   Float?
+  boardingPassScanned   Boolean               @default(false)
+  bagTagScanned         Boolean               @default(false)
+  acceptanceConfirmed   Boolean               @default(false)
+  status                BagDropTransactionStatus
+  errorCode             String?
+  errorMessage          String?
+  processingTime        Int?                  // seconds
+  createdAt             DateTime              @default(now())
+  completedAt           DateTime?
+
+  bagDrop               SelfServiceBagDrop    @relation(fields: [bagDropId], references: [id])
+
+  @@index([bagDropId])
+  @@index([bagTagNumber])
+  @@index([pnr])
+  @@index([flightNumber, flightDate])
+}
+
+enum BagDropTransactionStatus {
+  INITIATED
+  WEIGHING
+  SCANNING
+  ACCEPTED
+  REJECTED
+  ERROR
+  CANCELLED
+}
+
+// ============================================================================
+// BAGGAGE HANDLING SYSTEM (BHS)
+// ============================================================================
+
+model BaggageMessage {
+  id                    String                @id @default(uuid())
+  airportId             String
+  messageType           BaggageMessageType
+  messageVersion        String                @default("BSM_3.0")
+  messageId             String                @unique
+  direction             MessageDirection
+  rawMessage            String                @db.Text
+  parsedMessage         Json?
+  bagTagNumber          String?               // 10-digit IATA format
+  outboundFlightNumber  String?
+  outboundFlightDate    DateTime?
+  inboundFlightNumber   String?
+  inboundFlightDate     DateTime?
+  origin                String?
+  destination           String?
+  finalDestination      String?
+  passengerName         String?
+  pnr                   String?
+  seatNumber            String?
+  weight                Float?
+  pieces                Int?
+  baggageTagPool        String?               // Airline + serial range
+  processingStatus      MessageProcessingStatus
+  errorMessage          String?
+  sentAt                DateTime?
+  receivedAt            DateTime?
+  processedAt           DateTime?
+  acknowledgedAt        DateTime?
+  createdAt             DateTime              @default(now())
+
+  airport               Airport               @relation(fields: [airportId], references: [id])
+  trackingEvents        BaggageTrackingEvent[]
+
+  @@index([airportId])
+  @@index([messageType])
+  @@index([bagTagNumber])
+  @@index([outboundFlightNumber, outboundFlightDate])
+  @@index([processingStatus])
+}
+
+enum BaggageMessageType {
+  BSM       // Baggage Source Message
+  BPM       // Baggage Process Message
+  BTM       // Baggage Transfer Message
+  BNS       // Baggage Not Seen
+  BUM       // Baggage Unload Message
+}
+
+enum MessageDirection {
+  OUTBOUND
+  INBOUND
+}
+
+enum MessageProcessingStatus {
+  PENDING
+  PROCESSING
+  PROCESSED
+  FAILED
+  RETRY
+  ACKNOWLEDGED
+}
+
+model BaggageTrackingEvent {
+  id                    String                @id @default(uuid())
+  baggageMessageId      String
+  bagTagNumber          String
+  eventType             BaggageEventType
+  eventLocation         String                // Airport/Station code
+  eventCode             String                // IATA baggage event codes
+  eventDescription      String?
+  flightNumber          String?
+  flightDate            DateTime?
+  timestamp             DateTime              @default(now())
+  deviceId              String?
+  userId                String?
+  metadata              Json?
+
+  baggageMessage        BaggageMessage        @relation(fields: [baggageMessageId], references: [id])
+
+  @@index([bagTagNumber])
+  @@index([eventType])
+  @@index([timestamp])
+}
+
+enum BaggageEventType {
+  ACCEPTANCE            // Bag accepted at check-in
+  SORTING               // Bag sorted in BHS
+  LOADING               // Bag loaded on aircraft
+  ARRIVAL               // Bag arrived at destination
+  CLAIM                 // Bag claimed by passenger
+  TRANSFER              // Bag in transfer process
+  MISHANDLED            // Bag mishandled
+  FOUND                 // Mishandled bag found
+  DELAYED               // Bag delayed
+  DAMAGED               // Bag damaged
+  PILFERED              // Bag pilfered
+  LOST                  // Bag lost
+}
+
+model BagTagPool {
+  id                    String                @id @default(uuid())
+  airlineCode           String
+  poolIdentifier        String                @unique
+  startRange            BigInt
+  endRange              BigInt
+  currentNumber         BigInt
+  totalCapacity         BigInt
+  usedCount             BigInt                @default(0)
+  availableCount        BigInt
+  status                BagTagPoolStatus
+  allocatedDate         DateTime
+  expiryDate            DateTime?
+  isActive              Boolean               @default(true)
+  createdAt             DateTime              @default(now())
+  updatedAt             DateTime              @updatedAt
+
+  @@index([airlineCode])
+  @@index([poolIdentifier])
+  @@index([status])
+}
+
+enum BagTagPoolStatus {
+  ACTIVE
+  LOW_STOCK
+  DEPLETED
+  EXPIRED
+  SUSPENDED
+}
+
+// ============================================================================
+// BIOMETRIC SYSTEMS
+// ============================================================================
+
+model BiometricGate {
+  id                    String                @id @default(uuid())
+  airportId             String
+  gateId                String                @unique
+  gateType              BiometricGateType
+  location              String
+  terminalCode          String?
+  manufacturer          String?
+  model                 String?
+  capabilities          Json                  // {faceRecognition, fingerprint, iris, etc.}
+  accuracy              Float?                // Percentage
+  processingTime        Int?                  // milliseconds
+  status                BiometricGateStatus
+  lastHealthCheck       DateTime?
+  lastMaintenanceAt     DateTime?
+  errorCode             String?
+  errorMessage          String?
+  isActive              Boolean               @default(true)
+  createdAt             DateTime              @default(now())
+  updatedAt             DateTime              @updatedAt
+
+  airport               Airport               @relation(fields: [airportId], references: [id])
+  enrollments           BiometricEnrollment[]
+  verifications         BiometricVerification[]
+
+  @@index([airportId])
+  @@index([gateId])
+  @@index([status])
+}
+
+enum BiometricGateType {
+  CHECK_IN
+  BOARDING
+  CUSTOMS
+  IMMIGRATION
+  LOUNGE
+  BAG_DROP
+}
+
+enum BiometricGateStatus {
+  AVAILABLE
+  IN_USE
+  OFFLINE
+  MAINTENANCE
+  ERROR
+  CALIBRATING
+}
+
+model BiometricEnrollment {
+  id                    String                @id @default(uuid())
+  gateId                String
+  enrollmentId          String                @unique
+  pnr                   String
+  passengerName         String
+  flightNumber          String
+  flightDate            DateTime
+  biometricType         BiometricType
+  biometricTemplate     String?               @db.Text // Encrypted template
+  faceImageHash         String?
+  qualityScore          Float?
+  livenessScore         Float?
+  enrolledAt            DateTime              @default(now())
+  expiresAt             DateTime?
+  consentGiven          Boolean               @default(true)
+  consentTimestamp      DateTime?
+  privacyPolicyVersion  String?
+  status                EnrollmentStatus
+  metadata              Json?
+
+  gate                  BiometricGate         @relation(fields: [gateId], references: [id])
+  verifications         BiometricVerification[]
+
+  @@index([enrollmentId])
+  @@index([pnr])
+  @@index([flightNumber, flightDate])
+  @@index([status])
+}
+
+enum BiometricType {
+  FACE
+  FINGERPRINT
+  IRIS
+  PALM
+  VOICE
+}
+
+enum EnrollmentStatus {
+  ACTIVE
+  EXPIRED
+  REVOKED
+  FAILED
+}
+
+model BiometricVerification {
+  id                    String                @id @default(uuid())
+  gateId                String
+  enrollmentId          String?
+  verificationId        String                @unique
+  pnr                   String?
+  passengerName         String?
+  flightNumber          String?
+  flightDate            DateTime?
+  checkpointType        BiometricCheckpoint
+  biometricType         BiometricType
+  matchScore            Float?
+  threshold             Float                 @default(0.85)
+  matchResult           MatchResult
+  processingTime        Int?                  // milliseconds
+  verifiedAt            DateTime              @default(now())
+  fallbackToManual      Boolean               @default(false)
+  agentOverride         Boolean               @default(false)
+  agentId               String?
+  errorCode             String?
+  errorMessage          String?
+  metadata              Json?
+
+  gate                  BiometricGate         @relation(fields: [gateId], references: [id])
+  enrollment            BiometricEnrollment?  @relation(fields: [enrollmentId], references: [id])
+
+  @@index([gateId])
+  @@index([enrollmentId])
+  @@index([verificationId])
+  @@index([pnr])
+  @@index([matchResult])
+}
+
+enum BiometricCheckpoint {
+  CHECK_IN
+  BAG_DROP
+  SECURITY
+  BOARDING_GATE
+  CUSTOMS
+  IMMIGRATION
+  LOUNGE_ACCESS
+}
+
+enum MatchResult {
+  MATCH
+  NO_MATCH
+  ERROR
+  TIMEOUT
+  MANUAL_OVERRIDE
+}
+
+// ============================================================================
+// FLIGHT INFORMATION DISPLAY SYSTEM (FIDS)
+// ============================================================================
+
+model FidsDisplay {
+  id                    String                @id @default(uuid())
+  airportId             String
+  displayId             String                @unique
+  displayType           FidsDisplayType
+  location              String
+  terminalCode          String?
+  resolution            String?
+  manufacturer          String?
+  model                 String?
+  ipAddress             String?
+  displayContent        FidsContentType
+  updateInterval        Int                   @default(60) // seconds
+  status                DisplayStatus
+  lastUpdate            DateTime?
+  lastHealthCheck       DateTime?
+  errorCode             String?
+  errorMessage          String?
+  isActive              Boolean               @default(true)
+  createdAt             DateTime              @default(now())
+  updatedAt             DateTime              @updatedAt
+
+  airport               Airport               @relation(fields: [airportId], references: [id])
+
+  @@index([airportId])
+  @@index([displayId])
+  @@index([status])
+}
+
+enum FidsDisplayType {
+  DEPARTURES
+  ARRIVALS
+  GATE_ASSIGNMENT
+  BAGGAGE_CAROUSEL
+  CHECK_IN_COUNTER
+  WAYFINDING
+  GENERAL_INFO
+  ADVERTISING
+}
+
+enum FidsContentType {
+  FLIGHT_STATUS
+  GATE_INFO
+  BAGGAGE_CAROUSEL
+  CHECK_IN_COUNTER
+  BOARDING_ANNOUNCEMENT
+  DELAY_NOTIFICATION
+  CANCELLATION
+  GATE_CHANGE
+  EMERGENCY_MESSAGE
+}
+
+enum DisplayStatus {
+  ONLINE
+  OFFLINE
+  ERROR
+  MAINTENANCE
+}
+
+// ============================================================================
+// GATE MANAGEMENT
+// ============================================================================
+
+model Gate {
+  id                    String                @id @default(uuid())
+  airportId             String
+  terminalId            String?
+  gateNumber            String
+  gateName              String?
+  gateType              GateType
+  isDomestic            Boolean               @default(true)
+  isInternational       Boolean               @default(false)
+  hasJetBridge          Boolean               @default(true)
+  hasBiometric          Boolean               @default(false)
+  capacity              Int?                  // Passenger capacity
+  aircraftSizeCategory  String?               // A, B, C, D, E, F
+  status                GateStatus
+  currentFlight         String?
+  currentAirline        String?
+  assignedUntil         DateTime?
+  nextFlight            String?
+  nextFlightTime        DateTime?
+  latitude              Float?
+  longitude             Float?
+  isActive              Boolean               @default(true)
+  createdAt             DateTime              @default(now())
+  updatedAt             DateTime              @updatedAt
+
+  airport               Airport               @relation(fields: [airportId], references: [id])
+  terminal              Terminal?             @relation(fields: [terminalId], references: [id])
+  assignments           GateAssignment[]
+
+  @@unique([airportId, gateNumber])
+  @@index([airportId])
+  @@index([status])
+  @@index([currentFlight])
+}
+
+enum GateType {
+  CONTACT           // With jetbridge
+  REMOTE            // Bus required
+  HARDSTAND          // Walk to aircraft
+}
+
+enum GateStatus {
+  AVAILABLE
+  ASSIGNED
+  OCCUPIED
+  BOARDING
+  CLEANING
+  MAINTENANCE
+  BLOCKED
+}
+
+model GateAssignment {
+  id                    String                @id @default(uuid())
+  gateId                String
+  flightNumber          String
+  flightDate            DateTime
+  airlineCode           String
+  aircraftType          String?
+  scheduledArrival      DateTime?
+  scheduledDeparture    DateTime?
+  estimatedArrival      DateTime?
+  estimatedDeparture    DateTime?
+  actualArrival         DateTime?
+  actualDeparture       DateTime?
+  assignedAt            DateTime              @default(now())
+  assignedBy            String?
+  assignmentType        GateAssignmentType
+  priority              Int                   @default(5)
+  isDelayed             Boolean               @default(false)
+  delayMinutes          Int?
+  delayReason           String?
+  status                GateAssignmentStatus
+  releasedAt            DateTime?
+  metadata              Json?
+
+  gate                  Gate                  @relation(fields: [gateId], references: [id])
+
+  @@index([gateId])
+  @@index([flightNumber, flightDate])
+  @@index([status])
+  @@index([scheduledDeparture])
+}
+
+enum GateAssignmentType {
+  SCHEDULED
+  DYNAMIC
+  MANUAL
+  SWAP
+  EMERGENCY
+}
+
+enum GateAssignmentStatus {
+  ASSIGNED
+  CONFIRMED
+  BOARDING
+  DEPARTED
+  RELEASED
+  CANCELLED
+}
+
+// ============================================================================
+// BAGGAGE CAROUSEL
+// ============================================================================
+
+model BaggageCarousel {
+  id                    String                @id @default(uuid())
+  airportId             String
+  carouselNumber        String
+  carouselName          String?
+  terminalCode          String?
+  location              String
+  capacity              Int?
+  status                CarouselStatus
+  currentFlight         String?
+  currentAirline        String?
+  assignedUntil         DateTime?
+  lastMaintenanceAt     DateTime?
+  isActive              Boolean               @default(true)
+  createdAt             DateTime              @default(now())
+  updatedAt             DateTime              @updatedAt
+
+  airport               Airport               @relation(fields: [airportId], references: [id])
+  assignments           CarouselAssignment[]
+
+  @@unique([airportId, carouselNumber])
+  @@index([airportId])
+  @@index([status])
+}
+
+enum CarouselStatus {
+  AVAILABLE
+  ASSIGNED
+  ACTIVE
+  JAMMED
+  MAINTENANCE
+  OFFLINE
+}
+
+model CarouselAssignment {
+  id                    String                @id @default(uuid())
+  carouselId            String
+  flightNumber          String
+  flightDate            DateTime
+  airlineCode           String
+  origin                String
+  scheduledArrival      DateTime
+  estimatedArrival      DateTime?
+  actualArrival         DateTime?
+  assignedAt            DateTime              @default(now())
+  bagsStartTime         DateTime?
+  bagsCompleteTime      DateTime?
+  bagCount              Int?
+  status                CarouselAssignmentStatus
+
+  carousel              BaggageCarousel       @relation(fields: [carouselId], references: [id])
+
+  @@index([carouselId])
+  @@index([flightNumber, flightDate])
+  @@index([status])
+}
+
+enum CarouselAssignmentStatus {
+  ASSIGNED
+  ACTIVE
+  COMPLETED
+  CANCELLED
+}
+
+// ============================================================================
+// AIRPORT OPERATIONAL DATABASE (AODB)
+// ============================================================================
+
+model AirportFlight {
+  id                    String                @id @default(uuid())
+  airportId             String
+  flightId              String                @unique
+  flightNumber          String
+  flightDate            DateTime
+  airlineCode           String
+  aircraftType          String?
+  aircraftRegistration  String?
+  origin                String?
+  destination           String?
+  flightType            AirportFlightType
+
+  // Scheduled times
+  scheduledDeparture    DateTime?
+  scheduledArrival      DateTime?
+
+  // Estimated times
+  estimatedDeparture    DateTime?
+  estimatedArrival      DateTime?
+
+  // Actual times (AOBT, ATOT, AIBT, ALDT)
+  aobt                  DateTime?             // Actual Off-Block Time
+  atot                  DateTime?             // Actual Take-Off Time
+  aibt                  DateTime?             // Actual In-Block Time
+  aldt                  DateTime?             // Actual Landing Time
+
+  // Gate and stand
+  gate                  String?
+  stand                 String?
+  terminal              String?
+
+  // Baggage
+  carouselNumber        String?
+
+  // Check-in
+  checkInCounters       String[]
+  checkInOpenTime       DateTime?
+  checkInCloseTime      DateTime?
+
+  // Boarding
+  boardingGate          String?
+  boardingStartTime     DateTime?
+  boardingCloseTime     DateTime?
+
+  // Status
+  status                FlightStatus
+  delayCode             String?
+  delayMinutes          Int?
+  delayReason           String?
+  cancellationReason    String?
+
+  // Passenger counts
+  passengerCapacity     Int?
+  checkedInCount        Int                   @default(0)
+  boardedCount          Int                   @default(0)
+
+  // Baggage counts
+  baggageCount          Int                   @default(0)
+
+  // Operational
+  lastUpdated           DateTime              @updatedAt
+  createdAt             DateTime              @default(now())
+
+  airport               Airport               @relation(fields: [airportId], references: [id])
+  delayEvents           FlightDelayEvent[]
+  resourceAllocations   ResourceAllocation[]
+
+  @@index([airportId])
+  @@index([flightNumber, flightDate])
+  @@index([flightType])
+  @@index([status])
+  @@index([scheduledDeparture])
+  @@index([scheduledArrival])
+}
+
+enum AirportFlightType {
+  DEPARTURE
+  ARRIVAL
+  TURNAROUND
+}
+
+enum FlightStatus {
+  SCHEDULED
+  CHECK_IN_OPEN
+  BOARDING
+  GATE_CLOSED
+  DEPARTED
+  AIRBORNE
+  LANDED
+  ARRIVED
+  DELAYED
+  CANCELLED
+  DIVERTED
+}
+
+model FlightDelayEvent {
+  id                    String                @id @default(uuid())
+  flightId              String
+  delayCode             String                // IATA delay codes
+  delayCategory         DelayCategory
+  delayMinutes          Int
+  delayReason           String?
+  reportedBy            String?
+  reportedAt            DateTime              @default(now())
+  metadata              Json?
+
+  flight                AirportFlight         @relation(fields: [flightId], references: [id])
+
+  @@index([flightId])
+  @@index([delayCode])
+  @@index([delayCategory])
+}
+
+enum DelayCategory {
+  AIRLINE_OPERATIONS      // Code 1-39
+  REACTIONARY             // Code 93-99
+  WEATHER                 // Code 71-77
+  AIR_TRAFFIC_CONTROL     // Code 81-88
+  AIRPORT                 // Code 61-68
+  PASSENGER               // Code 41-48
+  BAGGAGE                 // Code 14, 15
+  CARGO                   // Code 16-18
+  TECHNICAL               // Code 51-58
+  DAMAGE                  // Code 51
+  SECURITY                // Code 85-87
+  OTHER                   // Misc
+}
+
+// ============================================================================
+// GROUND HANDLING & TURNAROUND
+// ============================================================================
+
+model ResourceAllocation {
+  id                    String                @id @default(uuid())
+  flightId              String
+  resourceType          ResourceType
+  resourceId            String?
+  quantity              Int                   @default(1)
+  requestedAt           DateTime              @default(now())
+  allocatedAt           DateTime?
+  releasedAt            DateTime?
+  status                AllocationStatus
+  notes                 String?
+
+  flight                AirportFlight         @relation(fields: [flightId], references: [id])
+
+  @@index([flightId])
+  @@index([resourceType])
+  @@index([status])
+}
+
+enum ResourceType {
+  GROUND_POWER_UNIT
+  AIR_STARTER_UNIT
+  POTABLE_WATER_TRUCK
+  LAVATORY_SERVICE
+  FUEL_TRUCK
+  CATERING_TRUCK
+  PASSENGER_STAIRS
+  TOW_TRUCK
+  BAGGAGE_CART
+  CLEANING_CREW
+  CATERING_CREW
+  RAMP_AGENT
+}
+
+enum AllocationStatus {
+  REQUESTED
+  ALLOCATED
+  IN_PROGRESS
+  COMPLETED
+  CANCELLED
+  FAILED
+}
+
+model TurnaroundChecklist {
+  id                    String                @id @default(uuid())
+  flightNumber          String
+  flightDate            DateTime
+  aircraftRegistration  String
+  checklistType         TurnaroundType
+  items                 Json                  // Array of checklist items
+  startedAt             DateTime?
+  completedAt           DateTime?
+  completedBy           String?
+  targetDuration        Int                   // minutes
+  actualDuration        Int?                  // minutes
+  status                ChecklistStatus
+  issues                Json?
+  createdAt             DateTime              @default(now())
+  updatedAt             DateTime              @updatedAt
+
+  @@index([flightNumber, flightDate])
+  @@index([aircraftRegistration])
+  @@index([status])
+}
+
+enum TurnaroundType {
+  SHORT_HAUL            // <60 minutes
+  MEDIUM_HAUL           // 60-120 minutes
+  LONG_HAUL             // >120 minutes
+  OVERNIGHT
+}
+
+enum ChecklistStatus {
+  PENDING
+  IN_PROGRESS
+  COMPLETED
+  DELAYED
+  INCOMPLETE
+}
+
+// ============================================================================
+// SECURITY SCREENING
+// ============================================================================
+
+model SecurityLane {
+  id                    String                @id @default(uuid())
+  terminalId            String
+  laneNumber            String
+  laneType              SecurityLaneType
+  isPriority            Boolean               @default(false)
+  isTsaPreCheck         Boolean               @default(false)
+  capacity              Int?                  // Passengers per hour
+  status                SecurityLaneStatus
+  currentWaitTime       Int?                  // minutes
+  lastUpdated           DateTime?
+  createdAt             DateTime              @default(now())
+  updatedAt             DateTime              @updatedAt
+
+  terminal              Terminal              @relation(fields: [terminalId], references: [id])
+  screenings            SecurityScreening[]
+
+  @@unique([terminalId, laneNumber])
+  @@index([terminalId])
+  @@index([status])
+  @@index([laneType])
+}
+
+enum SecurityLaneType {
+  STANDARD
+  PREMIUM
+  TSA_PRECHECK
+  CLEAR
+  PRIORITY
+}
+
+enum SecurityLaneStatus {
+  OPEN
+  CLOSED
+  MAINTENANCE
+}
+
+model SecurityScreening {
+  id                    String                @id @default(uuid())
+  laneId                String
+  pnr                   String?
+  passengerName         String?
+  flightNumber          String?
+  flightDate            DateTime?
+  boardingPass          String?
+  knownTravelerNumber   String?
+  isSelectee            Boolean               @default(false) // SSSS flag
+  isTsaPreCheck         Boolean               @default(false)
+  isClear               Boolean               @default(false)
+  screeningResult       ScreeningResult
+  additionalScreening   Boolean               @default(false)
+  screenedAt            DateTime              @default(now())
+  screenedBy            String?
+  processingTime        Int?                  // seconds
+  metadata              Json?
+
+  lane                  SecurityLane          @relation(fields: [laneId], references: [id])
+
+  @@index([laneId])
+  @@index([pnr])
+  @@index([flightNumber, flightDate])
+  @@index([screenedAt])
+}
+
+enum ScreeningResult {
+  CLEARED
+  ADDITIONAL_SCREENING
+  DENIED
+  MANUAL_CHECK
+}
+
+// ============================================================================
+// IMMIGRATION & CUSTOMS (APIS/PNRGOV)
+// ============================================================================
+
+model ApisMessage {
+  id                    String                @id @default(uuid())
+  messageType           ApisMessageType
+  messageId             String                @unique
+  flightNumber          String
+  flightDate            DateTime
+  origin                String
+  destination           String
+  aircraftRegistration  String?
+  passengerData         Json                  // Passenger details
+  crewData              Json?                 // Crew details
+  direction             ApiDirection
+  status                ApisStatus
+  submittedAt           DateTime?
+  acknowledgedAt        DateTime?
+  responseCode          String?
+  responseMessage       String?
+  errorMessage          String?
+  createdAt             DateTime              @default(now())
+
+  @@index([messageId])
+  @@index([flightNumber, flightDate])
+  @@index([status])
+}
+
+enum ApisMessageType {
+  PAXLST                // Passenger List
+  PNRGOV                // PNR Governance
+  CREW                  // Crew List
+  GENERAL_DECLARATION   // General Declaration
+}
+
+enum ApiDirection {
+  INBOUND
+  OUTBOUND
+}
+
+enum ApisStatus {
+  PENDING
+  SUBMITTED
+  ACKNOWLEDGED
+  REJECTED
+  ERROR
+}
+
+model PassengerDocument {
+  id                    String                @id @default(uuid())
+  pnr                   String
+  passengerName         String
+  documentType          DocumentType
+  documentNumber        String
+  issuingCountry        String
+  nationality           String
+  dateOfBirth           DateTime
+  gender                String
+  expiryDate            DateTime?
+  visaNumber            String?
+  visaType              String?
+  visaIssuingCountry    String?
+  visaExpiryDate        DateTime?
+  destination           String?
+  residenceAddress      String?
+  validatedAt           DateTime?
+  validatedBy           String?               // e.g., "TIMATIC"
+  validationResult      ValidationResult?
+  validationMessage     String?
+  createdAt             DateTime              @default(now())
+  updatedAt             DateTime              @updatedAt
+
+  @@index([pnr])
+  @@index([documentNumber])
+  @@index([nationality])
+}
+
+enum DocumentType {
+  PASSPORT
+  NATIONAL_ID
+  TRAVEL_DOCUMENT
+  REFUGEE_DOCUMENT
+  MILITARY_ID
+  CREW_MEMBER_LICENSE
+}
+
+enum ValidationResult {
+  VALID
+  INVALID
+  WARNING
+  ERROR
+  MANUAL_REVIEW
+}
+
+// ============================================================================
+// SITA TYPE B MESSAGING
+// ============================================================================
+
+model SitaMessage {
+  id                    String                @id @default(uuid())
+  airportId             String
+  messageType           SitaMessageType
+  messageId             String                @unique
+  flightNumber          String?
+  flightDate            DateTime?
+  origin                String?
+  destination           String?
+  aircraftRegistration  String?
+  sitaAddress           String
+  priority              MessagePriority
+  direction             SitaDirection
+  rawMessage            String                @db.Text
+  parsedMessage         Json?
+  status                SitaMessageStatus
+  sentAt                DateTime?
+  receivedAt            DateTime?
+  acknowledgedAt        DateTime?
+  errorMessage          String?
+  retryCount            Int                   @default(0)
+  createdAt             DateTime              @default(now())
+
+  airport               Airport               @relation(fields: [airportId], references: [id])
+
+  @@index([airportId])
+  @@index([messageType])
+  @@index([messageId])
+  @@index([flightNumber, flightDate])
+  @@index([status])
+}
+
+enum SitaMessageType {
+  MVT       // Movement Message - actual departure/arrival times
+  LDM       // Load Message - manifest and load data
+  CPM       // Current Passenger Message - boarding count
+  PSM       // Passenger Service Message - special handling
+  SLS       // Seat Loading Summary - seat allocation
+  ASM       // Ad-Hoc Schedule Message - schedule changes
+  FIM       // Flight Information Message
+  PRL       // Passenger Reconciliation List
+  NIL       // NIL message (no data to report)
+  PTM       // Passenger Transfer Message
+}
+
+enum MessagePriority {
+  URGENT
+  HIGH
+  NORMAL
+  LOW
+}
+
+enum SitaDirection {
+  SEND
+  RECEIVE
+}
+
+enum SitaMessageStatus {
+  PENDING
+  SENT
+  RECEIVED
+  ACKNOWLEDGED
+  FAILED
+  RETRY
+}
+
+// ============================================================================
+// OPERATIONAL MONITORING
+// ============================================================================
+
+model SystemHealth {
+  id                    String                @id @default(uuid())
+  systemType            AirportSystemType
+  systemId              String
+  healthStatus          HealthStatus
+  responseTime          Int?                  // milliseconds
+  lastHealthCheck       DateTime              @default(now())
+  errorMessage          String?
+  metadata              Json?
+
+  @@index([systemType])
+  @@index([systemId])
+  @@index([healthStatus])
+  @@index([lastHealthCheck])
+}
+
+enum AirportSystemType {
+  CUTE
+  CUPPS
+  CUSS
+  BHS
+  FIDS
+  AODB
+  BIOMETRIC
+  GATE_SYSTEM
+  SECURITY
+  KIOSK
+  BAG_DROP
+  SITA_NETWORK
+}
+
+enum HealthStatus {
+  HEALTHY
+  DEGRADED
+  DOWN
+  MAINTENANCE
+  ERROR
+}
