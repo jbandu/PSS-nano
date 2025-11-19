@@ -1,0 +1,1352 @@
+// Notification Service Schema
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ============================================================================
+// NOTIFICATION RECORDS
+// ============================================================================
+
+model Notification {
+  id                    String                @id @default(uuid())
+  notificationId        String                @unique
+  userId                String
+  userEmail             String?
+  userPhone             String?
+  userDeviceToken       String?
+
+  // Type and category
+  notificationType      NotificationType
+  category              NotificationCategory
+  priority              NotificationPriority
+
+  // Content
+  subject               String?
+  title                 String?
+  body                  String                @db.Text
+  bodyHtml              String?               @db.Text
+  bodyPlain             String?               @db.Text
+
+  // Context
+  pnr                   String?
+  flightNumber          String?
+  bookingReference      String?
+  orderId               String?
+
+  // Template
+  templateId            String?
+  templateData          Json?
+
+  // Channels
+  channels              NotificationChannel[]
+  primaryChannel        NotificationChannel?
+  fallbackChannels      NotificationChannel[]
+
+  // Scheduling
+  scheduledFor          DateTime?
+  sendAfter             DateTime?
+  sendBefore            DateTime?
+
+  // Delivery
+  status                NotificationStatus
+  sentAt                DateTime?
+  deliveredAt           DateTime?
+  failedAt              DateTime?
+
+  // Engagement
+  openedAt              DateTime?
+  clickedAt             DateTime?
+  convertedAt           DateTime?
+
+  // Errors
+  errorCode             String?
+  errorMessage          String?
+  retryCount            Int                   @default(0)
+  maxRetries            Int                   @default(3)
+
+  // Metadata
+  metadata              Json?
+  tags                  String[]
+
+  // Audit
+  createdAt             DateTime              @default(now())
+  updatedAt             DateTime              @updatedAt
+
+  emailNotification     EmailNotification?
+  smsNotification       SmsNotification?
+  pushNotification      PushNotification?
+  whatsappNotification  WhatsAppNotification?
+  voiceNotification     VoiceNotification?
+  inAppNotification     InAppNotification?
+
+  @@index([userId])
+  @@index([notificationType])
+  @@index([category])
+  @@index([status])
+  @@index([scheduledFor])
+  @@index([createdAt])
+  @@index([pnr])
+  @@index([flightNumber])
+}
+
+enum NotificationType {
+  TRANSACTIONAL
+  MARKETING
+  OPERATIONAL
+  SYSTEM
+  ALERT
+}
+
+enum NotificationCategory {
+  BOOKING_CONFIRMATION
+  PAYMENT_CONFIRMATION
+  CHECK_IN_REMINDER
+  BOARDING_REMINDER
+  GATE_CHANGE
+  FLIGHT_DELAY
+  FLIGHT_CANCELLATION
+  FLIGHT_STATUS
+  ITINERARY_CHANGE
+  REFUND_CONFIRMATION
+  UPGRADE_OFFER
+  PROMOTION
+  NEWSLETTER
+  SURVEY
+  PRICE_ALERT
+  LOYALTY_UPDATE
+  ACCOUNT_NOTIFICATION
+  SECURITY_ALERT
+  SYSTEM_MAINTENANCE
+  OTHER
+}
+
+enum NotificationPriority {
+  CRITICAL      // Immediate delivery
+  HIGH          // Within 5 minutes
+  NORMAL        // Within 30 minutes
+  LOW           // Within 24 hours
+}
+
+enum NotificationChannel {
+  EMAIL
+  SMS
+  PUSH
+  WHATSAPP
+  VOICE
+  IN_APP
+}
+
+enum NotificationStatus {
+  PENDING
+  QUEUED
+  PROCESSING
+  SENT
+  DELIVERED
+  FAILED
+  BOUNCED
+  CANCELLED
+  EXPIRED
+}
+
+// ============================================================================
+// EMAIL NOTIFICATIONS
+// ============================================================================
+
+model EmailNotification {
+  id                    String                @id @default(uuid())
+  notificationId        String                @unique
+
+  // Recipient
+  toEmail               String
+  toName                String?
+
+  // Sender
+  fromEmail             String
+  fromName              String?
+  replyToEmail          String?
+
+  // CC/BCC
+  ccEmails              String[]
+  bccEmails             String[]
+
+  // Content
+  subject               String
+  htmlBody              String?               @db.Text
+  textBody              String?               @db.Text
+
+  // Attachments
+  hasAttachments        Boolean               @default(false)
+  attachmentUrls        String[]
+
+  // Email specific
+  headers               Json?
+  customArgs            Json?
+  categories            String[]
+
+  // Provider
+  provider              EmailProvider
+  providerId            String?               // SendGrid/Mailgun message ID
+
+  // Tracking
+  trackOpens            Boolean               @default(true)
+  trackClicks           Boolean               @default(true)
+
+  // Delivery
+  sentAt                DateTime?
+  deliveredAt           DateTime?
+  openedAt              DateTime?
+  clickedAt             DateTime?
+  bouncedAt             DateTime?
+  bounceReason          String?
+  bounceType            BounceType?
+
+  // Engagement
+  openCount             Int                   @default(0)
+  clickCount            Int                   @default(0)
+  unsubscribedAt        DateTime?
+  spamReportAt          DateTime?
+
+  // Status
+  status                EmailStatus
+  errorMessage          String?
+
+  createdAt             DateTime              @default(now())
+  updatedAt             DateTime              @updatedAt
+
+  notification          Notification          @relation(fields: [notificationId], references: [id], onDelete: Cascade)
+  clickEvents           EmailClickEvent[]
+
+  @@index([toEmail])
+  @@index([status])
+  @@index([sentAt])
+  @@index([providerId])
+}
+
+enum EmailProvider {
+  SENDGRID
+  MAILGUN
+  AWS_SES
+  MAILCHIMP
+  POSTMARK
+  SMTP
+}
+
+enum EmailStatus {
+  PENDING
+  SENT
+  DELIVERED
+  OPENED
+  CLICKED
+  BOUNCED
+  SPAM
+  UNSUBSCRIBED
+  FAILED
+}
+
+enum BounceType {
+  HARD          // Permanent failure
+  SOFT          // Temporary failure
+  COMPLAINT     // Spam complaint
+}
+
+model EmailClickEvent {
+  id                    String                @id @default(uuid())
+  emailNotificationId   String
+  url                   String
+  clickedAt             DateTime              @default(now())
+  ipAddress             String?
+  userAgent             String?
+
+  emailNotification     EmailNotification     @relation(fields: [emailNotificationId], references: [id], onDelete: Cascade)
+
+  @@index([emailNotificationId])
+  @@index([clickedAt])
+}
+
+// ============================================================================
+// SMS NOTIFICATIONS
+// ============================================================================
+
+model SmsNotification {
+  id                    String                @id @default(uuid())
+  notificationId        String                @unique
+
+  // Recipient
+  toPhone               String
+  toCountryCode         String?
+
+  // Sender
+  fromPhone             String                // Twilio number or short code
+  messagingServiceSid   String?               // Twilio Messaging Service
+
+  // Content
+  body                  String
+  characterCount        Int
+  segmentCount          Int                   @default(1)
+
+  // Provider
+  provider              SmsProvider
+  providerId            String?               // Twilio SID
+
+  // Delivery
+  sentAt                DateTime?
+  deliveredAt           DateTime?
+  failedAt              DateTime?
+
+  // Status
+  status                SmsStatus
+  errorCode             String?
+  errorMessage          String?
+
+  // Pricing
+  price                 Float?
+  currency              String?
+
+  // Two-way SMS
+  isReplyExpected       Boolean               @default(false)
+  conversationId        String?
+
+  createdAt             DateTime              @default(now())
+  updatedAt             DateTime              @updatedAt
+
+  notification          Notification          @relation(fields: [notificationId], references: [id], onDelete: Cascade)
+  replies               SmsReply[]
+
+  @@index([toPhone])
+  @@index([status])
+  @@index([sentAt])
+  @@index([providerId])
+  @@index([conversationId])
+}
+
+enum SmsProvider {
+  TWILIO
+  PLIVO
+  VONAGE
+  AWS_SNS
+  MESSAGEBIRD
+}
+
+enum SmsStatus {
+  PENDING
+  QUEUED
+  SENDING
+  SENT
+  DELIVERED
+  UNDELIVERED
+  FAILED
+}
+
+model SmsReply {
+  id                    String                @id @default(uuid())
+  smsNotificationId     String
+  fromPhone             String
+  toPhone               String
+  body                  String
+  receivedAt            DateTime              @default(now())
+  processedAt           DateTime?
+  metadata              Json?
+
+  smsNotification       SmsNotification       @relation(fields: [smsNotificationId], references: [id], onDelete: Cascade)
+
+  @@index([smsNotificationId])
+  @@index([fromPhone])
+  @@index([receivedAt])
+}
+
+// ============================================================================
+// PUSH NOTIFICATIONS
+// ============================================================================
+
+model PushNotification {
+  id                    String                @id @default(uuid())
+  notificationId        String                @unique
+
+  // Device
+  deviceToken           String
+  platform              PushPlatform
+
+  // Content
+  title                 String
+  body                  String
+
+  // Rich content
+  imageUrl              String?
+  iconUrl               String?
+  soundName             String?
+
+  // Badge
+  badgeCount            Int?
+
+  // Actions
+  actions               Json?                 // Array of action buttons
+
+  // Deep linking
+  deepLink              String?
+  webUrl                String?
+
+  // Data payload
+  dataPayload           Json?
+
+  // Behavior
+  isSilent              Boolean               @default(false)
+  collapseKey           String?               // For grouping
+  timeToLive            Int?                  // Seconds
+
+  // Provider
+  provider              PushProvider
+  providerId            String?               // FCM/APNS message ID
+
+  // Delivery
+  sentAt                DateTime?
+  deliveredAt           DateTime?
+  openedAt              DateTime?
+  dismissedAt           DateTime?
+
+  // Status
+  status                PushStatus
+  errorCode             String?
+  errorMessage          String?
+
+  createdAt             DateTime              @default(now())
+  updatedAt             DateTime              @updatedAt
+
+  notification          Notification          @relation(fields: [notificationId], references: [id], onDelete: Cascade)
+
+  @@index([deviceToken])
+  @@index([platform])
+  @@index([status])
+  @@index([sentAt])
+}
+
+enum PushPlatform {
+  IOS
+  ANDROID
+  WEB
+}
+
+enum PushProvider {
+  FCM               // Firebase Cloud Messaging
+  APNS              // Apple Push Notification Service
+  WEB_PUSH          // Web Push API
+  ONESIGNAL
+  AIRSHIP
+}
+
+enum PushStatus {
+  PENDING
+  SENT
+  DELIVERED
+  OPENED
+  DISMISSED
+  FAILED
+  INVALID_TOKEN
+}
+
+// ============================================================================
+// WHATSAPP NOTIFICATIONS
+// ============================================================================
+
+model WhatsAppNotification {
+  id                    String                @id @default(uuid())
+  notificationId        String                @unique
+
+  // Recipient
+  toPhone               String
+  toCountryCode         String?
+
+  // Sender
+  fromPhone             String                // WhatsApp Business number
+
+  // Message type
+  messageType           WhatsAppMessageType
+
+  // Content (template or session)
+  templateName          String?
+  templateLanguage      String?
+  templateParameters    Json?
+
+  // Session message
+  messageBody           String?
+
+  // Media
+  mediaUrl              String?
+  mediaType             WhatsAppMediaType?
+  caption               String?
+
+  // Provider
+  provider              WhatsAppProvider
+  providerId            String?               // Twilio SID or Meta message ID
+
+  // Delivery
+  sentAt                DateTime?
+  deliveredAt           DateTime?
+  readAt                DateTime?
+
+  // Status
+  status                WhatsAppStatus
+  errorCode             String?
+  errorMessage          String?
+
+  // Conversation
+  conversationId        String?
+  isBusinessInitiated   Boolean               @default(true)
+
+  createdAt             DateTime              @default(now())
+  updatedAt             DateTime              @updatedAt
+
+  notification          Notification          @relation(fields: [notificationId], references: [id], onDelete: Cascade)
+  replies               WhatsAppReply[]
+
+  @@index([toPhone])
+  @@index([status])
+  @@index([sentAt])
+  @@index([conversationId])
+}
+
+enum WhatsAppMessageType {
+  TEMPLATE          // Pre-approved templates only
+  SESSION           // Within 24-hour window
+  MEDIA
+}
+
+enum WhatsAppMediaType {
+  IMAGE
+  VIDEO
+  DOCUMENT
+  AUDIO
+}
+
+enum WhatsAppProvider {
+  TWILIO
+  META              // Meta WhatsApp Business API
+  MESSAGEBIRD
+}
+
+enum WhatsAppStatus {
+  PENDING
+  SENT
+  DELIVERED
+  READ
+  FAILED
+}
+
+model WhatsAppReply {
+  id                    String                @id @default(uuid())
+  whatsappNotificationId String
+  fromPhone             String
+  toPhone               String
+  messageBody           String?
+  mediaUrl              String?
+  receivedAt            DateTime              @default(now())
+  processedAt           DateTime?
+  metadata              Json?
+
+  whatsappNotification  WhatsAppNotification  @relation(fields: [whatsappNotificationId], references: [id], onDelete: Cascade)
+
+  @@index([whatsappNotificationId])
+  @@index([fromPhone])
+  @@index([receivedAt])
+}
+
+// ============================================================================
+// VOICE NOTIFICATIONS
+// ============================================================================
+
+model VoiceNotification {
+  id                    String                @id @default(uuid())
+  notificationId        String                @unique
+
+  // Recipient
+  toPhone               String
+  toCountryCode         String?
+
+  // Sender
+  fromPhone             String                // Twilio number
+
+  // Voice call type
+  callType              VoiceCallType
+
+  // Content
+  message               String?               @db.Text
+  ttsVoice              String?               // Text-to-speech voice
+  audioUrl              String?               // Pre-recorded audio
+
+  // IVR
+  ivrMenuOptions        Json?
+  userResponse          String?
+
+  // Call details
+  callDuration          Int?                  // Seconds
+  recordingUrl          String?
+  recordingConsent      Boolean               @default(false)
+
+  // Provider
+  provider              VoiceProvider
+  providerId            String?               // Twilio Call SID
+
+  // Delivery
+  initiatedAt           DateTime?
+  answeredAt            DateTime?
+  completedAt           DateTime?
+
+  // Status
+  status                VoiceStatus
+  errorCode             String?
+  errorMessage          String?
+
+  // Pricing
+  price                 Float?
+  currency              String?
+
+  createdAt             DateTime              @default(now())
+  updatedAt             DateTime              @updatedAt
+
+  notification          Notification          @relation(fields: [notificationId], references: [id], onDelete: Cascade)
+
+  @@index([toPhone])
+  @@index([status])
+  @@index([initiatedAt])
+}
+
+enum VoiceCallType {
+  OUTBOUND_ALERT    // Automated alert call
+  OUTBOUND_IVR      // Interactive voice response
+  CLICK_TO_CALL     // Customer-initiated callback
+}
+
+enum VoiceProvider {
+  TWILIO
+  PLIVO
+  VONAGE
+}
+
+enum VoiceStatus {
+  PENDING
+  QUEUED
+  RINGING
+  IN_PROGRESS
+  COMPLETED
+  BUSY
+  NO_ANSWER
+  FAILED
+  CANCELLED
+}
+
+// ============================================================================
+// IN-APP NOTIFICATIONS
+// ============================================================================
+
+model InAppNotification {
+  id                    String                @id @default(uuid())
+  notificationId        String                @unique
+
+  // Recipient
+  userId                String
+
+  // Content
+  title                 String
+  message               String                @db.Text
+  iconUrl               String?
+  imageUrl              String?
+
+  // Action
+  actionType            InAppActionType?
+  actionUrl             String?
+  actionData            Json?
+
+  // Rich content
+  richContent           Json?                 // HTML, components, etc.
+
+  // Display
+  displayType           InAppDisplayType
+  displayPosition       String?
+  displayDuration       Int?                  // Milliseconds
+
+  // Priority
+  isPersistent          Boolean               @default(true)
+  isPinned              Boolean               @default(false)
+
+  // Read status
+  isRead                Boolean               @default(false)
+  readAt                DateTime?
+
+  // Interaction
+  isClicked             Boolean               @default(false)
+  clickedAt             DateTime?
+
+  // Dismissal
+  isDismissible         Boolean               @default(true)
+  dismissedAt           DateTime?
+
+  // Expiry
+  expiresAt             DateTime?
+
+  createdAt             DateTime              @default(now())
+  updatedAt             DateTime              @updatedAt
+
+  notification          Notification          @relation(fields: [notificationId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([isRead])
+  @@index([isPinned])
+  @@index([createdAt])
+  @@index([expiresAt])
+}
+
+enum InAppActionType {
+  NAVIGATE          // Navigate to screen/page
+  OPEN_URL          // Open external URL
+  EXECUTE_ACTION    // Trigger app action
+  NONE
+}
+
+enum InAppDisplayType {
+  BANNER
+  MODAL
+  TOAST
+  INBOX_MESSAGE
+  BADGE
+}
+
+// ============================================================================
+// NOTIFICATION TEMPLATES
+// ============================================================================
+
+model NotificationTemplate {
+  id                    String                @id @default(uuid())
+  templateId            String                @unique
+  name                  String
+  description           String?
+
+  // Type
+  notificationType      NotificationType
+  category              NotificationCategory
+
+  // Channels
+  supportedChannels     NotificationChannel[]
+
+  // Content by channel
+  emailSubject          String?
+  emailBodyHtml         String?               @db.Text
+  emailBodyPlain        String?               @db.Text
+  smsBody               String?
+  pushTitle             String?
+  pushBody              String?
+  whatsappBody          String?
+  voiceScript           String?               @db.Text
+  inAppTitle            String?
+  inAppMessage          String?               @db.Text
+
+  // Template engine
+  templateEngine        TemplateEngine        @default(HANDLEBARS)
+
+  // Variables
+  variables             Json?                 // List of available variables
+  defaultValues         Json?                 // Default values for variables
+
+  // Localization
+  language              String                @default("en")
+  isTranslatable        Boolean               @default(true)
+
+  // Versioning
+  version               Int                   @default(1)
+  isActive              Boolean               @default(true)
+  isDraft               Boolean               @default(true)
+
+  // A/B Testing
+  isAbTestVariant       Boolean               @default(false)
+  abTestId              String?
+  variantName           String?
+  trafficAllocation     Int?                  // Percentage
+
+  // Usage tracking
+  usageCount            Int                   @default(0)
+  lastUsedAt            DateTime?
+
+  // Audit
+  createdBy             String
+  updatedBy             String?
+  publishedAt           DateTime?
+  publishedBy           String?
+
+  createdAt             DateTime              @default(now())
+  updatedAt             DateTime              @updatedAt
+
+  translations          TemplateTranslation[]
+  abTestResults         AbTestResult[]
+
+  @@index([templateId])
+  @@index([category])
+  @@index([isActive])
+  @@index([language])
+}
+
+enum TemplateEngine {
+  HANDLEBARS
+  MUSTACHE
+  EJS
+  LIQUID
+}
+
+model TemplateTranslation {
+  id                    String                @id @default(uuid())
+  templateId            String
+  language              String
+
+  // Translated content
+  emailSubject          String?
+  emailBodyHtml         String?               @db.Text
+  emailBodyPlain        String?               @db.Text
+  smsBody               String?
+  pushTitle             String?
+  pushBody              String?
+  whatsappBody          String?
+  voiceScript           String?               @db.Text
+  inAppTitle            String?
+  inAppMessage          String?               @db.Text
+
+  // Metadata
+  translatedBy          String?
+  reviewedBy            String?
+  isApproved            Boolean               @default(false)
+
+  createdAt             DateTime              @default(now())
+  updatedAt             DateTime              @updatedAt
+
+  template              NotificationTemplate  @relation(fields: [templateId], references: [id], onDelete: Cascade)
+
+  @@unique([templateId, language])
+  @@index([templateId])
+  @@index([language])
+}
+
+// ============================================================================
+// NOTIFICATION TRIGGERS
+// ============================================================================
+
+model NotificationTrigger {
+  id                    String                @id @default(uuid())
+  triggerId             String                @unique
+  name                  String
+  description           String?
+
+  // Trigger type
+  triggerType           TriggerType
+
+  // Event-based
+  eventName             String?
+  eventSource           String?
+
+  // Schedule-based
+  scheduleType          ScheduleType?
+  cronExpression        String?
+  scheduleTime          String?               // HH:mm format
+  scheduleTimezone      String?
+
+  // Threshold-based
+  thresholdMetric       String?
+  thresholdOperator     ThresholdOperator?
+  thresholdValue        Float?
+
+  // Conditions
+  conditions            Json?                 // Filter conditions
+
+  // Template
+  templateId            String
+
+  // Target audience
+  targetAudience        AudienceType
+  userSegmentId         String?
+  userQuery             Json?                 // Dynamic user filtering
+
+  // Channels
+  channels              NotificationChannel[]
+
+  // Send-time optimization
+  optimizeSendTime      Boolean               @default(false)
+  respectQuietHours     Boolean               @default(true)
+
+  // Rate limiting
+  maxSendsPerDay        Int?
+  maxSendsPerUser       Int?
+
+  // Status
+  isActive              Boolean               @default(true)
+  lastTriggeredAt       DateTime?
+  nextTriggerAt         DateTime?
+
+  // Statistics
+  totalTriggered        Int                   @default(0)
+  totalSent             Int                   @default(0)
+
+  createdAt             DateTime              @default(now())
+  updatedAt             DateTime              @updatedAt
+
+  executions            TriggerExecution[]
+
+  @@index([triggerId])
+  @@index([triggerType])
+  @@index([isActive])
+  @@index([nextTriggerAt])
+}
+
+enum TriggerType {
+  EVENT_DRIVEN      // Based on system events
+  SCHEDULED         // Time-based
+  USER_ACTION       // User behavior
+  THRESHOLD         // Metric-based
+  RECURRING         // Repeated notifications
+}
+
+enum ScheduleType {
+  ONCE
+  DAILY
+  WEEKLY
+  MONTHLY
+  CRON
+}
+
+enum ThresholdOperator {
+  EQUALS
+  NOT_EQUALS
+  GREATER_THAN
+  LESS_THAN
+  GREATER_THAN_OR_EQUAL
+  LESS_THAN_OR_EQUAL
+}
+
+enum AudienceType {
+  ALL_USERS
+  SEGMENT
+  INDIVIDUAL
+  QUERY
+}
+
+model TriggerExecution {
+  id                    String                @id @default(uuid())
+  triggerId             String
+  executionId           String                @unique
+
+  // Execution details
+  executedAt            DateTime              @default(now())
+  targetedUsers         Int
+  notificationsSent     Int
+  notificationsFailed   Int
+
+  // Status
+  status                ExecutionStatus
+  errorMessage          String?
+
+  // Duration
+  processingTime        Int?                  // Milliseconds
+
+  metadata              Json?
+
+  trigger               NotificationTrigger   @relation(fields: [triggerId], references: [id], onDelete: Cascade)
+
+  @@index([triggerId])
+  @@index([executedAt])
+  @@index([status])
+}
+
+enum ExecutionStatus {
+  STARTED
+  IN_PROGRESS
+  COMPLETED
+  FAILED
+  CANCELLED
+}
+
+// ============================================================================
+// USER PREFERENCES
+// ============================================================================
+
+model UserNotificationPreference {
+  id                    String                @id @default(uuid())
+  userId                String                @unique
+
+  // Global preferences
+  isEnabled             Boolean               @default(true)
+
+  // Channel preferences
+  emailEnabled          Boolean               @default(true)
+  smsEnabled            Boolean               @default(true)
+  pushEnabled           Boolean               @default(true)
+  whatsappEnabled       Boolean               @default(false)
+  voiceEnabled          Boolean               @default(false)
+  inAppEnabled          Boolean               @default(true)
+
+  // Category preferences
+  categoryPreferences   Json?                 // Per-category opt-in/opt-out
+
+  // Frequency caps
+  maxEmailsPerDay       Int                   @default(10)
+  maxSmsPerDay          Int                   @default(5)
+  maxPushPerDay         Int                   @default(20)
+
+  // Quiet hours
+  quietHoursEnabled     Boolean               @default(false)
+  quietHoursStart       String?               // HH:mm format
+  quietHoursEnd         String?               // HH:mm format
+  quietHoursTimezone    String?
+
+  // Language
+  preferredLanguage     String                @default("en")
+
+  // Contact information
+  primaryEmail          String?
+  secondaryEmail        String?
+  primaryPhone          String?
+  countryCode           String?
+
+  // Device tokens
+  deviceTokens          String[]
+
+  // Consent tracking
+  emailConsentGiven     Boolean               @default(false)
+  smsConsentGiven       Boolean               @default(false)
+  pushConsentGiven      Boolean               @default(false)
+  whatsappConsentGiven  Boolean               @default(false)
+  voiceConsentGiven     Boolean               @default(false)
+
+  emailConsentDate      DateTime?
+  smsConsentDate        DateTime?
+  pushConsentDate       DateTime?
+  whatsappConsentDate   DateTime?
+  voiceConsentDate      DateTime?
+
+  // Marketing consent
+  marketingConsent      Boolean               @default(false)
+  marketingConsentDate  DateTime?
+
+  // Unsubscribe
+  isUnsubscribed        Boolean               @default(false)
+  unsubscribedAt        DateTime?
+  unsubscribeReason     String?
+
+  createdAt             DateTime              @default(now())
+  updatedAt             DateTime              @updatedAt
+
+  @@index([userId])
+  @@index([isUnsubscribed])
+}
+
+// ============================================================================
+// ANALYTICS
+// ============================================================================
+
+model NotificationAnalytics {
+  id                    String                @id @default(uuid())
+
+  // Time period
+  date                  DateTime
+  hour                  Int?
+
+  // Dimensions
+  channel               NotificationChannel
+  notificationType      NotificationType
+  category              NotificationCategory?
+  templateId            String?
+
+  // Metrics
+  sent                  Int                   @default(0)
+  delivered             Int                   @default(0)
+  opened                Int                   @default(0)
+  clicked               Int                   @default(0)
+  converted             Int                   @default(0)
+  bounced               Int                   @default(0)
+  failed                Int                   @default(0)
+  unsubscribed          Int                   @default(0)
+
+  // Rates
+  deliveryRate          Float?
+  openRate              Float?
+  clickRate             Float?
+  conversionRate        Float?
+  bounceRate            Float?
+  unsubscribeRate       Float?
+
+  // Revenue (if applicable)
+  revenue               Float?
+  currency              String?
+
+  // Cost
+  cost                  Float?
+
+  createdAt             DateTime              @default(now())
+
+  @@unique([date, hour, channel, notificationType, category, templateId])
+  @@index([date])
+  @@index([channel])
+  @@index([notificationType])
+  @@index([templateId])
+}
+
+model UserEngagementScore {
+  id                    String                @id @default(uuid())
+  userId                String                @unique
+
+  // Engagement scores by channel (0-100)
+  emailScore            Float                 @default(0)
+  smsScore              Float                 @default(0)
+  pushScore             Float                 @default(0)
+  whatsappScore         Float                 @default(0)
+  inAppScore            Float                 @default(0)
+
+  // Overall score
+  overallScore          Float                 @default(0)
+
+  // Engagement tier
+  engagementTier        EngagementTier        @default(MEDIUM)
+
+  // Preferred channel (based on engagement)
+  preferredChannel      NotificationChannel?
+
+  // Activity tracking
+  lastEmailOpenAt       DateTime?
+  lastSmsReplyAt        DateTime?
+  lastPushOpenAt        DateTime?
+  lastWhatsappReplyAt   DateTime?
+  lastInAppClickAt      DateTime?
+
+  // Statistics
+  totalNotificationsReceived Int              @default(0)
+  totalNotificationsOpened   Int              @default(0)
+  totalNotificationsClicked  Int              @default(0)
+
+  lastCalculatedAt      DateTime              @default(now())
+  createdAt             DateTime              @default(now())
+  updatedAt             DateTime              @updatedAt
+
+  @@index([userId])
+  @@index([engagementTier])
+  @@index([preferredChannel])
+}
+
+enum EngagementTier {
+  VERY_HIGH
+  HIGH
+  MEDIUM
+  LOW
+  VERY_LOW
+}
+
+// ============================================================================
+// A/B TESTING
+// ============================================================================
+
+model AbTestResult {
+  id                    String                @id @default(uuid())
+  templateId            String
+  abTestId              String
+  variantName           String
+
+  // Sample size
+  sent                  Int                   @default(0)
+
+  // Results
+  delivered             Int                   @default(0)
+  opened                Int                   @default(0)
+  clicked               Int                   @default(0)
+  converted             Int                   @default(0)
+
+  // Rates
+  deliveryRate          Float?
+  openRate              Float?
+  clickRate             Float?
+  conversionRate        Float?
+
+  // Statistical significance
+  isSignificant         Boolean               @default(false)
+  confidenceLevel       Float?
+  pValue                Float?
+
+  // Winner
+  isWinner              Boolean               @default(false)
+
+  // Period
+  startDate             DateTime
+  endDate               DateTime?
+
+  createdAt             DateTime              @default(now())
+  updatedAt             DateTime              @updatedAt
+
+  template              NotificationTemplate  @relation(fields: [templateId], references: [id], onDelete: Cascade)
+
+  @@unique([abTestId, variantName])
+  @@index([templateId])
+  @@index([abTestId])
+  @@index([isWinner])
+}
+
+// ============================================================================
+// COMPLIANCE
+// ============================================================================
+
+model UnsubscribeRequest {
+  id                    String                @id @default(uuid())
+  userId                String
+  email                 String?
+  phone                 String?
+
+  // Unsubscribe scope
+  unsubscribeType       UnsubscribeType
+  channels              NotificationChannel[]
+  categories            NotificationCategory[]
+
+  // Reason
+  reason                String?
+  feedback              String?               @db.Text
+
+  // Processing
+  processedAt           DateTime?
+  isProcessed           Boolean               @default(false)
+
+  // Metadata
+  ipAddress             String?
+  userAgent             String?
+
+  requestedAt           DateTime              @default(now())
+
+  @@index([userId])
+  @@index([email])
+  @@index([processedAt])
+}
+
+enum UnsubscribeType {
+  ALL_NOTIFICATIONS
+  MARKETING_ONLY
+  SPECIFIC_CHANNELS
+  SPECIFIC_CATEGORIES
+}
+
+model DoNotContact {
+  id                    String                @id @default(uuid())
+  contactType           ContactType
+  contactValue          String                @unique
+
+  // Scope
+  channels              NotificationChannel[]
+
+  // Reason
+  reason                DoNotContactReason
+  notes                 String?
+
+  // Dates
+  addedAt               DateTime              @default(now())
+  expiresAt             DateTime?
+
+  // Source
+  addedBy               String?
+  source                String?
+
+  isActive              Boolean               @default(true)
+
+  @@index([contactType, contactValue])
+  @@index([isActive])
+}
+
+enum ContactType {
+  EMAIL
+  PHONE
+  DEVICE_TOKEN
+  USER_ID
+}
+
+enum DoNotContactReason {
+  USER_REQUEST
+  SPAM_COMPLAINT
+  HARD_BOUNCE
+  LEGAL_REQUIREMENT
+  CARRIER_BLOCK
+  DEVICE_UNREGISTERED
+  OTHER
+}
+
+// ============================================================================
+// DELIVERY OPTIMIZATION
+// ============================================================================
+
+model SendTimeOptimization {
+  id                    String                @id @default(uuid())
+  userId                String                @unique
+
+  // Optimal send times by channel (hour of day, 0-23)
+  emailOptimalHour      Int?
+  smsOptimalHour        Int?
+  pushOptimalHour       Int?
+
+  // Optimal days (0-6, Sunday-Saturday)
+  emailOptimalDays      Int[]
+  smsOptimalDays        Int[]
+  pushOptimalDays       Int[]
+
+  // Timezone
+  timezone              String                @default("UTC")
+
+  // Calculation metadata
+  sampleSize            Int                   @default(0)
+  confidence            Float?
+
+  lastCalculatedAt      DateTime              @default(now())
+  createdAt             DateTime              @default(now())
+  updatedAt             DateTime              @updatedAt
+
+  @@index([userId])
+}
+
+// ============================================================================
+// SYSTEM
+// ============================================================================
+
+model NotificationQueue {
+  id                    String                @id @default(uuid())
+  queueName             String
+  jobId                 String                @unique
+
+  // Job details
+  notificationId        String?
+  triggerId             String?
+
+  // Payload
+  payload               Json
+
+  // Priority
+  priority              Int                   @default(5)
+
+  // Retry
+  attempts              Int                   @default(0)
+  maxAttempts           Int                   @default(3)
+
+  // Timing
+  scheduledFor          DateTime?
+  processedAt           DateTime?
+  completedAt           DateTime?
+  failedAt              DateTime?
+
+  // Status
+  status                QueueStatus
+  errorMessage          String?
+
+  createdAt             DateTime              @default(now())
+  updatedAt             DateTime              @updatedAt
+
+  @@index([queueName])
+  @@index([status])
+  @@index([scheduledFor])
+  @@index([priority])
+}
+
+enum QueueStatus {
+  PENDING
+  PROCESSING
+  COMPLETED
+  FAILED
+  DEAD_LETTER
+}
