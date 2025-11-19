@@ -1,0 +1,834 @@
+// Marketing Service - Customer Segmentation & Campaign Management
+// Comprehensive platform for targeted marketing and personalization
+
+generator client {
+  provider = "prisma-client-js"
+  output   = "../node_modules/.prisma/client"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ============================================================================
+// CUSTOMER SEGMENTATION
+// ============================================================================
+
+model CustomerSegment {
+  id                    String                @id @default(uuid())
+  
+  // Segment identification
+  name                  String
+  description           String?
+  segmentType           SegmentType
+  
+  // Segment criteria (stored as JSON rules)
+  criteria              Json                  // Flexible rule engine
+  
+  // Segment size
+  customerCount         Int                   @default(0)
+  lastCalculated        DateTime?
+  
+  // Status
+  isActive              Boolean               @default(true)
+  isSystem              Boolean               @default(false) // System vs custom
+  
+  // Metadata
+  tags                  String[]
+  createdBy             String
+  createdAt             DateTime              @default(now())
+  updatedAt             DateTime              @updatedAt
+  
+  // Relationships
+  campaigns             CampaignSegment[]
+  customerMemberships   CustomerSegmentMembership[]
+  
+  @@index([segmentType])
+  @@index([isActive])
+  @@map("customer_segments")
+}
+
+enum SegmentType {
+  DEMOGRAPHIC
+  BEHAVIORAL
+  VALUE_BASED
+  LIFECYCLE
+  PREDICTIVE
+  CUSTOM
+}
+
+model CustomerSegmentMembership {
+  id                    String                @id @default(uuid())
+  customerId            String
+  segmentId             String
+  
+  // Membership details
+  joinedAt              DateTime              @default(now())
+  score                 Float?                // Segment affinity score
+  
+  // For RFM segments
+  recencyScore          Int?                  // 1-5
+  frequencyScore        Int?                  // 1-5
+  monetaryScore         Int?                  // 1-5
+  rfmSegment            String?               // "Champions", "Loyal", etc.
+  
+  // Predictive scores
+  churnRisk             Float?                // 0-1
+  lifetimeValuePredicted Float?
+  nextPurchaseProbability Float?
+  
+  // Relationships
+  segment               CustomerSegment       @relation(fields: [segmentId], references: [id], onDelete: Cascade)
+  
+  @@unique([customerId, segmentId])
+  @@index([customerId])
+  @@index([segmentId])
+  @@index([rfmSegment])
+  @@map("customer_segment_memberships")
+}
+
+// ============================================================================
+// CAMPAIGNS
+// ============================================================================
+
+model Campaign {
+  id                    String                @id @default(uuid())
+  
+  // Campaign identification
+  name                  String
+  description           String?
+  campaignCode          String                @unique
+  campaignType          CampaignType
+  
+  // Targeting
+  targetAudience        String                // Description
+  estimatedReach        Int?
+  
+  // Timing
+  startDate             DateTime
+  endDate               DateTime
+  timezone              String                @default("UTC")
+  
+  // Budget
+  budgetAmount          Float?
+  budgetCurrency        String                @default("USD")
+  spentAmount           Float                 @default(0)
+  
+  // Goals
+  goalType              CampaignGoal
+  goalValue             Float?
+  
+  // Status
+  status                CampaignStatus        @default(DRAFT)
+  
+  // Performance
+  sentCount             Int                   @default(0)
+  deliveredCount        Int                   @default(0)
+  openCount             Int                   @default(0)
+  clickCount            Int                   @default(0)
+  conversionCount       Int                   @default(0)
+  revenueGenerated      Float                 @default(0)
+  
+  // Metadata
+  tags                  String[]
+  createdBy             String
+  approvedBy            String?
+  approvedAt            DateTime?
+  createdAt             DateTime              @default(now())
+  updatedAt             DateTime              @updatedAt
+  
+  // Relationships
+  segments              CampaignSegment[]
+  channels              CampaignChannel[]
+  variants              CampaignVariant[]
+  offers                CampaignOffer[]
+  executions            CampaignExecution[]
+  
+  @@index([campaignCode])
+  @@index([status])
+  @@index([startDate, endDate])
+  @@map("campaigns")
+}
+
+enum CampaignType {
+  PROMOTIONAL
+  TRANSACTIONAL
+  LIFECYCLE
+  TRIGGERED
+  DRIP
+  RE_ENGAGEMENT
+  CROSS_SELL
+  UPSELL
+}
+
+enum CampaignGoal {
+  AWARENESS
+  ENGAGEMENT
+  CONVERSION
+  RETENTION
+  REVENUE
+  CUSTOM
+}
+
+enum CampaignStatus {
+  DRAFT
+  SCHEDULED
+  ACTIVE
+  PAUSED
+  COMPLETED
+  CANCELLED
+}
+
+model CampaignSegment {
+  id                    String                @id @default(uuid())
+  campaignId            String
+  segmentId             String
+  
+  // Include or exclude
+  include               Boolean               @default(true)
+  
+  createdAt             DateTime              @default(now())
+  
+  // Relationships
+  campaign              Campaign              @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+  segment               CustomerSegment       @relation(fields: [segmentId], references: [id])
+  
+  @@unique([campaignId, segmentId])
+  @@map("campaign_segments")
+}
+
+model CampaignChannel {
+  id                    String                @id @default(uuid())
+  campaignId            String
+  
+  // Channel details
+  channel               Channel
+  priority              Int                   @default(1)
+  
+  // Channel-specific config
+  config                Json?                 // Email template, SMS message, etc.
+  
+  // Scheduling
+  sendTime              String?               // HH:MM format or "optimal"
+  
+  // Performance
+  sentCount             Int                   @default(0)
+  deliveredCount        Int                   @default(0)
+  failedCount           Int                   @default(0)
+  
+  createdAt             DateTime              @default(now())
+  updatedAt             DateTime              @updatedAt
+  
+  // Relationships
+  campaign              Campaign              @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+  
+  @@index([campaignId, channel])
+  @@map("campaign_channels")
+}
+
+enum Channel {
+  EMAIL
+  SMS
+  PUSH
+  IN_APP
+  WEBSITE
+  SOCIAL_MEDIA
+  DIRECT_MAIL
+}
+
+model CampaignVariant {
+  id                    String                @id @default(uuid())
+  campaignId            String
+  
+  // Variant details
+  name                  String
+  description           String?
+  variantCode           String
+  
+  // A/B Testing
+  trafficAllocation     Int                   @default(50) // Percentage
+  isControl             Boolean               @default(false)
+  isWinner              Boolean               @default(false)
+  
+  // Content
+  subject               String?               // For email
+  content               String?               @db.Text
+  ctaText               String?
+  ctaUrl                String?
+  
+  // Performance
+  sentCount             Int                   @default(0)
+  openCount             Int                   @default(0)
+  clickCount            Int                   @default(0)
+  conversionCount       Int                   @default(0)
+  
+  // Statistical significance
+  confidenceLevel       Float?
+  pValue                Float?
+  
+  createdAt             DateTime              @default(now())
+  updatedAt             DateTime              @updatedAt
+  
+  // Relationships
+  campaign              Campaign              @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+  
+  @@unique([campaignId, variantCode])
+  @@map("campaign_variants")
+}
+
+// ============================================================================
+// OFFERS & PROMOTIONS
+// ============================================================================
+
+model Offer {
+  id                    String                @id @default(uuid())
+  
+  // Offer identification
+  name                  String
+  description           String?
+  offerCode             String                @unique
+  
+  // Offer type and value
+  offerType             OfferType
+  discountType          DiscountType?
+  discountValue         Float?
+  discountPercentage    Float?
+  
+  // Validity
+  validFrom             DateTime
+  validTo               DateTime
+  
+  // Usage limits
+  maxUsageTotal         Int?                  // Total redemptions allowed
+  maxUsagePerCustomer   Int                   @default(1)
+  currentUsageCount     Int                   @default(0)
+  
+  // Restrictions
+  minimumPurchase       Float?
+  maximumDiscount       Float?
+  applicableRoutes      String[]              // Array of route codes
+  applicableFares       String[]              // Array of fare classes
+  blackoutDates         Json?                 // Array of date ranges
+  
+  // Rules
+  stackable             Boolean               @default(false)
+  combineWithOthers     Boolean               @default(false)
+  
+  // Status
+  status                OfferStatus           @default(ACTIVE)
+  
+  // Performance tracking
+  redemptionCount       Int                   @default(0)
+  revenueImpact         Float                 @default(0)
+  
+  createdAt             DateTime              @default(now())
+  updatedAt             DateTime              @updatedAt
+  
+  // Relationships
+  campaigns             CampaignOffer[]
+  redemptions           OfferRedemption[]
+  
+  @@index([offerCode])
+  @@index([status])
+  @@index([validFrom, validTo])
+  @@map("offers")
+}
+
+enum OfferType {
+  DISCOUNT
+  BUNDLE
+  UPGRADE
+  FREE_PRODUCT
+  CASH_BACK
+  POINTS_BONUS
+}
+
+enum DiscountType {
+  FIXED_AMOUNT
+  PERCENTAGE
+  BUY_ONE_GET_ONE
+  FREE_SHIPPING
+}
+
+enum OfferStatus {
+  DRAFT
+  ACTIVE
+  PAUSED
+  EXPIRED
+  DEPLETED
+}
+
+model CampaignOffer {
+  id                    String                @id @default(uuid())
+  campaignId            String
+  offerId               String
+  
+  // Priority if multiple offers
+  priority              Int                   @default(1)
+  
+  createdAt             DateTime              @default(now())
+  
+  // Relationships
+  campaign              Campaign              @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+  offer                 Offer                 @relation(fields: [offerId], references: [id])
+  
+  @@unique([campaignId, offerId])
+  @@map("campaign_offers")
+}
+
+model OfferRedemption {
+  id                    String                @id @default(uuid())
+  offerId               String
+  
+  // Customer and booking
+  customerId            String
+  pnrLocator            String?
+  bookingReference      String?
+  
+  // Redemption details
+  redemptionCode        String
+  redemptionDate        DateTime              @default(now())
+  
+  // Value
+  originalAmount        Float
+  discountAmount        Float
+  finalAmount           Float
+  
+  // Status
+  status                RedemptionStatus      @default(APPLIED)
+  
+  // Relationships
+  offer                 Offer                 @relation(fields: [offerId], references: [id])
+  
+  @@index([offerId])
+  @@index([customerId])
+  @@index([pnrLocator])
+  @@map("offer_redemptions")
+}
+
+enum RedemptionStatus {
+  APPLIED
+  COMPLETED
+  REFUNDED
+  CANCELLED
+}
+
+// ============================================================================
+// CAMPAIGN AUTOMATION
+// ============================================================================
+
+model AutomationRule {
+  id                    String                @id @default(uuid())
+  
+  // Rule identification
+  name                  String
+  description           String?
+  
+  // Trigger
+  triggerType           TriggerType
+  triggerEvent          String                // Event name
+  triggerConditions     Json                  // Conditions to evaluate
+  
+  // Actions
+  actions               Json                  // Array of actions to perform
+  
+  // Timing
+  delay                 Int?                  // Minutes to wait before execution
+  sendTime              String?               // Specific time of day
+  
+  // Status
+  isActive              Boolean               @default(true)
+  
+  // Performance
+  executionCount        Int                   @default(0)
+  lastExecuted          DateTime?
+  
+  createdAt             DateTime              @default(now())
+  updatedAt             DateTime              @updatedAt
+  
+  // Relationships
+  executions            AutomationExecution[]
+  
+  @@index([triggerType])
+  @@index([isActive])
+  @@map("automation_rules")
+}
+
+enum TriggerType {
+  EVENT_BASED          // Booking created, abandoned cart, etc.
+  TIME_BASED           // Birthday, anniversary, etc.
+  BEHAVIOR_BASED       // Page visit, search, etc.
+  LIFECYCLE_BASED      // Segment change, inactivity, etc.
+  MANUAL               // Manually triggered
+}
+
+model AutomationExecution {
+  id                    String                @id @default(uuid())
+  ruleId                String
+  
+  // Execution details
+  customerId            String
+  triggerData           Json?                 // Data that triggered the rule
+  
+  // Status
+  status                ExecutionStatus
+  executedAt            DateTime              @default(now())
+  completedAt           DateTime?
+  
+  // Results
+  actionsPerformed      Int                   @default(0)
+  errorMessage          String?
+  
+  // Relationships
+  rule                  AutomationRule        @relation(fields: [ruleId], references: [id])
+  
+  @@index([ruleId])
+  @@index([customerId])
+  @@index([status])
+  @@map("automation_executions")
+}
+
+enum ExecutionStatus {
+  PENDING
+  RUNNING
+  COMPLETED
+  FAILED
+  SKIPPED
+}
+
+// ============================================================================
+// CUSTOMER JOURNEY
+// ============================================================================
+
+model CustomerJourney {
+  id                    String                @id @default(uuid())
+  
+  // Journey identification
+  name                  String
+  description           String?
+  
+  // Journey definition (visual flow)
+  definition            Json                  // Nodes and edges
+  
+  // Entry criteria
+  entryCriteria         Json
+  
+  // Exit criteria
+  exitCriteria          Json?
+  
+  // Status
+  isActive              Boolean               @default(true)
+  
+  // Performance
+  customersEntered      Int                   @default(0)
+  customersCompleted    Int                   @default(0)
+  customersDropped      Int                   @default(0)
+  
+  createdAt             DateTime              @default(now())
+  updatedAt             DateTime              @updatedAt
+  
+  // Relationships
+  instances             JourneyInstance[]
+  
+  @@map("customer_journeys")
+}
+
+model JourneyInstance {
+  id                    String                @id @default(uuid())
+  journeyId             String
+  customerId            String
+  
+  // Instance details
+  currentStep           String
+  status                JourneyStatus
+  
+  // Timing
+  enteredAt             DateTime              @default(now())
+  completedAt           DateTime?
+  
+  // Context data
+  contextData           Json?
+  
+  // Relationships
+  journey               CustomerJourney       @relation(fields: [journeyId], references: [id])
+  touchpoints           JourneyTouchpoint[]
+  
+  @@index([journeyId])
+  @@index([customerId])
+  @@index([status])
+  @@map("journey_instances")
+}
+
+enum JourneyStatus {
+  ACTIVE
+  COMPLETED
+  DROPPED
+  PAUSED
+}
+
+model JourneyTouchpoint {
+  id                    String                @id @default(uuid())
+  instanceId            String
+  
+  // Touchpoint details
+  stepId                String
+  stepType              String                // Email, SMS, Wait, Decision, etc.
+  channel               Channel?
+  
+  // Timing
+  triggeredAt           DateTime              @default(now())
+  completedAt           DateTime?
+  
+  // Performance
+  success               Boolean?
+  errorMessage          String?
+  
+  // Attribution
+  attributed            Boolean               @default(false)
+  attributedRevenue     Float?
+  
+  // Relationships
+  instance              JourneyInstance       @relation(fields: [instanceId], references: [id], onDelete: Cascade)
+  
+  @@index([instanceId])
+  @@map("journey_touchpoints")
+}
+
+// ============================================================================
+// CAMPAIGN EXECUTION & TRACKING
+// ============================================================================
+
+model CampaignExecution {
+  id                    String                @id @default(uuid())
+  campaignId            String
+  
+  // Recipient
+  customerId            String
+  customerEmail         String?
+  customerPhone         String?
+  
+  // Execution details
+  channel               Channel
+  variantId             String?
+  
+  // Timing
+  scheduledAt           DateTime?
+  sentAt                DateTime?
+  deliveredAt           DateTime?
+  
+  // Engagement
+  openedAt              DateTime?
+  clickedAt             DateTime?
+  convertedAt           DateTime?
+  
+  // Conversion
+  pnrLocator            String?
+  revenueAttribued      Float?
+  
+  // Status
+  status                MessageStatus
+  errorMessage          String?
+  
+  // Relationships
+  campaign              Campaign              @relation(fields: [campaignId], references: [id])
+  
+  @@index([campaignId])
+  @@index([customerId])
+  @@index([status])
+  @@index([sentAt])
+  @@map("campaign_executions")
+}
+
+enum MessageStatus {
+  PENDING
+  SENT
+  DELIVERED
+  OPENED
+  CLICKED
+  CONVERTED
+  BOUNCED
+  FAILED
+  UNSUBSCRIBED
+}
+
+// ============================================================================
+// COMPLIANCE & CONSENT
+// ============================================================================
+
+model CustomerConsent {
+  id                    String                @id @default(uuid())
+  customerId            String
+  
+  // Consent details
+  channel               Channel
+  consentGiven          Boolean
+  consentDate           DateTime              @default(now())
+  
+  // Source
+  source                String?               // Where consent was captured
+  ipAddress             String?
+  
+  // Withdrawal
+  withdrawnAt           DateTime?
+  withdrawalReason      String?
+  
+  // Preferences
+  frequency             String?               // Daily, weekly, monthly
+  topics                String[]              // Interested topics
+  
+  @@unique([customerId, channel])
+  @@index([customerId])
+  @@map("customer_consents")
+}
+
+model DoNotContact {
+  id                    String                @id @default(uuid())
+  
+  // Contact information
+  email                 String?               @unique
+  phone                 String?               @unique
+  
+  // Reason
+  reason                String
+  addedAt               DateTime              @default(now())
+  addedBy               String?               // System, manual, etc.
+  
+  // Type
+  type                  DNDType
+  
+  // Expiry (for temporary blocks)
+  expiresAt             DateTime?
+  
+  @@index([email])
+  @@index([phone])
+  @@map("do_not_contact")
+}
+
+enum DNDType {
+  PERMANENT
+  TEMPORARY
+  SPAM_COMPLAINT
+  HARD_BOUNCE
+  USER_REQUEST
+}
+
+// ============================================================================
+// EMAIL TEMPLATES
+// ============================================================================
+
+model EmailTemplate {
+  id                    String                @id @default(uuid())
+  
+  // Template identification
+  name                  String
+  description           String?
+  templateCode          String                @unique
+  
+  // Template content
+  subject               String
+  preheader             String?
+  htmlContent           String                @db.Text
+  textContent           String?               @db.Text
+  mjmlSource            String?               @db.Text
+  
+  // Template type
+  category              String
+  
+  // Personalization tokens
+  tokens                String[]              // Available tokens
+  
+  // Status
+  isActive              Boolean               @default(true)
+  
+  // Versioning
+  version               Int                   @default(1)
+  
+  createdAt             DateTime              @default(now())
+  updatedAt             DateTime              @updatedAt
+  
+  @@index([templateCode])
+  @@index([category])
+  @@map("email_templates")
+}
+
+// ============================================================================
+// PERSONALIZATION
+// ============================================================================
+
+model PersonalizationRule {
+  id                    String                @id @default(uuid())
+  
+  // Rule identification
+  name                  String
+  description           String?
+  
+  // Targeting
+  targetSegments        String[]
+  targetRoutes          String[]
+  
+  // Personalization type
+  type                  PersonalizationType
+  
+  // Content
+  content               Json                  // Personalized content/offer
+  
+  // Priority (higher = more important)
+  priority              Int                   @default(1)
+  
+  // Status
+  isActive              Boolean               @default(true)
+  
+  // Performance
+  impressions           Int                   @default(0)
+  clicks                Int                   @default(0)
+  conversions           Int                   @default(0)
+  
+  createdAt             DateTime              @default(now())
+  updatedAt             DateTime              @updatedAt
+  
+  @@index([type])
+  @@index([isActive])
+  @@map("personalization_rules")
+}
+
+enum PersonalizationType {
+  BANNER
+  POPUP
+  RECOMMENDED_ROUTE
+  RECOMMENDED_PRODUCT
+  DYNAMIC_PRICING
+  CONTENT_BLOCK
+  HERO_IMAGE
+}
+
+// ============================================================================
+// ANALYTICS
+// ============================================================================
+
+model CampaignAnalytics {
+  id                    String                @id @default(uuid())
+  campaignId            String
+  
+  // Date
+  date                  DateTime
+  
+  // Metrics
+  sent                  Int                   @default(0)
+  delivered             Int                   @default(0)
+  opened                Int                   @default(0)
+  clicked               Int                   @default(0)
+  converted             Int                   @default(0)
+  unsubscribed          Int                   @default(0)
+  bounced               Int                   @default(0)
+  
+  // Revenue
+  revenue               Float                 @default(0)
+  cost                  Float                 @default(0)
+  roi                   Float?
+  
+  @@unique([campaignId, date])
+  @@index([campaignId])
+  @@index([date])
+  @@map("campaign_analytics")
+}
