@@ -1,0 +1,129 @@
+groups:
+  - name: business_alerts
+    interval: 1m
+    rules:
+      # Low booking rate
+      - alert: LowBookingRate
+        expr: |
+          sum(rate(business_events_total{event_type="booking", event_name="booking_created"}[5m])) < 0.1
+        for: 10m
+        labels:
+          severity: warning
+          category: business
+        annotations:
+          summary: "Low booking rate detected"
+          description: "Booking rate is {{ $value }} bookings per second (threshold: 0.1/s)"
+
+      # High payment failure rate
+      - alert: HighPaymentFailureRate
+        expr: |
+          (
+            sum(rate(business_events_total{event_type="payment", event_name="payment_failed"}[5m]))
+            /
+            sum(rate(business_events_total{event_type="payment", event_name=~"payment_.*"}[5m]))
+          ) > 0.15
+        for: 5m
+        labels:
+          severity: critical
+          category: business
+        annotations:
+          summary: "High payment failure rate"
+          description: "Payment failure rate is {{ $value | humanizePercentage }} (threshold: 15%)"
+
+      # High cancellation rate
+      - alert: HighCancellationRate
+        expr: |
+          (
+            sum(rate(business_events_total{event_type="booking", event_name="booking_cancelled"}[1h]))
+            /
+            sum(rate(business_events_total{event_type="booking", event_name="booking_created"}[1h]))
+          ) > 0.20
+        for: 30m
+        labels:
+          severity: warning
+          category: business
+        annotations:
+          summary: "High cancellation rate"
+          description: "Cancellation rate is {{ $value | humanizePercentage }} (threshold: 20%)"
+
+      # Inventory overbooking detected
+      - alert: InventoryOverbooking
+        expr: |
+          sum(business_events_total{event_type="inventory", event_name="overbooking_detected"}) > 0
+        for: 1m
+        labels:
+          severity: critical
+          category: business
+        annotations:
+          summary: "Inventory overbooking detected"
+          description: "Overbooking has been detected in the inventory system"
+
+      # SLA violation - response time
+      - alert: SLAViolationResponseTime
+        expr: |
+          histogram_quantile(0.99,
+            sum(rate(http_request_duration_seconds_bucket{route=~"/api/(booking|reservation).*"}[5m])) by (le)
+          ) > 0.2
+        for: 5m
+        labels:
+          severity: critical
+          category: sla
+        annotations:
+          summary: "SLA violation: High response time"
+          description: "P99 response time for critical endpoints is {{ $value }}s (SLO: 200ms)"
+
+      # SLA violation - availability
+      - alert: SLAViolationAvailability
+        expr: |
+          (
+            sum(rate(http_requests_total{status_code!~"5.."}[5m]))
+            /
+            sum(rate(http_requests_total[5m]))
+          ) < 0.999
+        for: 5m
+        labels:
+          severity: critical
+          category: sla
+        annotations:
+          summary: "SLA violation: Low availability"
+          description: "Service availability is {{ $value | humanizePercentage }} (SLO: 99.9%)"
+
+      # Revenue drop alert
+      - alert: RevenueDrop
+        expr: |
+          (
+            sum(rate(business_events_total{event_type="payment", event_name="payment_completed"}[1h]))
+            <
+            sum(rate(business_events_total{event_type="payment", event_name="payment_completed"}[1h] offset 24h)) * 0.7
+          )
+        for: 30m
+        labels:
+          severity: critical
+          category: business
+        annotations:
+          summary: "Significant revenue drop detected"
+          description: "Revenue has dropped by more than 30% compared to same time yesterday"
+
+      # Fraud detection
+      - alert: SuspiciousFraudActivity
+        expr: |
+          sum(rate(business_events_total{event_type="security", event_name="fraud_indicator"}[5m])) > 5
+        for: 5m
+        labels:
+          severity: critical
+          category: security
+        annotations:
+          summary: "Suspicious fraud activity detected"
+          description: "Fraud indicators are being triggered at {{ $value }} per second"
+
+      # Failed authentication spike
+      - alert: FailedAuthenticationSpike
+        expr: |
+          sum(rate(business_events_total{event_type="security", event_name="auth_failure"}[5m])) > 10
+        for: 5m
+        labels:
+          severity: warning
+          category: security
+        annotations:
+          summary: "Spike in failed authentication attempts"
+          description: "Failed authentication attempts: {{ $value }} per second"

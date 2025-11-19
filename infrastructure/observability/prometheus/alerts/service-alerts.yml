@@ -1,0 +1,177 @@
+groups:
+  - name: service_alerts
+    interval: 30s
+    rules:
+      # High error rate alert
+      - alert: HighErrorRate
+        expr: |
+          (
+            sum(rate(http_request_errors_total[5m])) by (service, job)
+            /
+            sum(rate(http_requests_total[5m])) by (service, job)
+          ) > 0.05
+        for: 5m
+        labels:
+          severity: warning
+          category: availability
+        annotations:
+          summary: "High error rate detected in {{ $labels.service }}"
+          description: "Service {{ $labels.service }} has error rate of {{ $value | humanizePercentage }} (threshold: 5%)"
+
+      # Critical error rate alert
+      - alert: CriticalErrorRate
+        expr: |
+          (
+            sum(rate(http_request_errors_total[5m])) by (service, job)
+            /
+            sum(rate(http_requests_total[5m])) by (service, job)
+          ) > 0.10
+        for: 2m
+        labels:
+          severity: critical
+          category: availability
+        annotations:
+          summary: "Critical error rate in {{ $labels.service }}"
+          description: "Service {{ $labels.service }} has error rate of {{ $value | humanizePercentage }} (threshold: 10%)"
+
+      # High response time alert
+      - alert: HighResponseTime
+        expr: |
+          histogram_quantile(0.95,
+            sum(rate(http_request_duration_seconds_bucket[5m])) by (le, service, job)
+          ) > 2
+        for: 5m
+        labels:
+          severity: warning
+          category: performance
+        annotations:
+          summary: "High response time in {{ $labels.service }}"
+          description: "Service {{ $labels.service }} has P95 response time of {{ $value }}s (threshold: 2s)"
+
+      # Service down alert
+      - alert: ServiceDown
+        expr: up{job=~".*-service"} == 0
+        for: 1m
+        labels:
+          severity: critical
+          category: availability
+        annotations:
+          summary: "Service {{ $labels.job }} is down"
+          description: "Service {{ $labels.job }} has been down for more than 1 minute"
+
+      # High memory usage
+      - alert: HighMemoryUsage
+        expr: |
+          (
+            process_resident_memory_bytes
+            /
+            (1024 * 1024 * 1024)
+          ) > 2
+        for: 5m
+        labels:
+          severity: warning
+          category: resources
+        annotations:
+          summary: "High memory usage in {{ $labels.job }}"
+          description: "Service {{ $labels.job }} is using {{ $value }}GB of memory (threshold: 2GB)"
+
+      # High CPU usage
+      - alert: HighCPUUsage
+        expr: |
+          rate(process_cpu_seconds_total[5m]) > 0.8
+        for: 5m
+        labels:
+          severity: warning
+          category: resources
+        annotations:
+          summary: "High CPU usage in {{ $labels.job }}"
+          description: "Service {{ $labels.job }} CPU usage is {{ $value | humanizePercentage }}"
+
+      # Database connection pool exhaustion
+      - alert: DatabaseConnectionPoolNearlyExhausted
+        expr: |
+          (
+            db_connection_pool_used
+            /
+            db_connection_pool_size
+          ) > 0.8
+        for: 5m
+        labels:
+          severity: warning
+          category: database
+        annotations:
+          summary: "Database connection pool nearly exhausted in {{ $labels.service }}"
+          description: "Service {{ $labels.service }} is using {{ $value | humanizePercentage }} of database connections"
+
+      # Slow database queries
+      - alert: SlowDatabaseQueries
+        expr: |
+          histogram_quantile(0.95,
+            sum(rate(db_query_duration_seconds_bucket[5m])) by (le, service)
+          ) > 1
+        for: 5m
+        labels:
+          severity: warning
+          category: database
+        annotations:
+          summary: "Slow database queries in {{ $labels.service }}"
+          description: "Service {{ $labels.service }} has P95 query time of {{ $value }}s"
+
+      # High queue depth
+      - alert: HighQueueDepth
+        expr: queue_depth > 1000
+        for: 5m
+        labels:
+          severity: warning
+          category: queue
+        annotations:
+          summary: "High queue depth in {{ $labels.queue_name }}"
+          description: "Queue {{ $labels.queue_name }} has {{ $value }} messages pending"
+
+      # Queue processing failures
+      - alert: HighQueueFailureRate
+        expr: |
+          (
+            rate(queue_failed_total[5m])
+            /
+            rate(queue_processed_total[5m])
+          ) > 0.1
+        for: 5m
+        labels:
+          severity: warning
+          category: queue
+        annotations:
+          summary: "High queue failure rate in {{ $labels.queue_name }}"
+          description: "Queue {{ $labels.queue_name }} has failure rate of {{ $value | humanizePercentage }}"
+
+      # External API errors
+      - alert: ExternalAPIHighErrorRate
+        expr: |
+          (
+            sum(rate(external_api_errors_total[5m])) by (service, endpoint)
+            /
+            sum(rate(external_api_calls_total[5m])) by (service, endpoint)
+          ) > 0.1
+        for: 5m
+        labels:
+          severity: warning
+          category: external
+        annotations:
+          summary: "High error rate for external API {{ $labels.endpoint }}"
+          description: "External API {{ $labels.endpoint }} has error rate of {{ $value | humanizePercentage }}"
+
+      # Low cache hit rate
+      - alert: LowCacheHitRate
+        expr: |
+          (
+            sum(rate(cache_hits_total[5m])) by (cache_name)
+            /
+            (sum(rate(cache_hits_total[5m])) by (cache_name) + sum(rate(cache_misses_total[5m])) by (cache_name))
+          ) < 0.5
+        for: 10m
+        labels:
+          severity: info
+          category: performance
+        annotations:
+          summary: "Low cache hit rate for {{ $labels.cache_name }}"
+          description: "Cache {{ $labels.cache_name }} has hit rate of {{ $value | humanizePercentage }} (threshold: 50%)"
