@@ -41,7 +41,7 @@
     "react-native-screens": "^3.29.0",
     "react-native-svg": "^14.1.0",
     "react-native-tcp-socket": "^6.0.6",
-    "react-native-text-recognition": "^0.2.3",
+    "react-native-text-recognition": "^1.1.1",
     "react-native-vector-icons": "^10.0.3",
     "react-native-vision-camera": "^3.6.17",
     "react-redux": "^9.0.4",
