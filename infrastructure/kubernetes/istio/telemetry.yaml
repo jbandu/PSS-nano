@@ -1,0 +1,49 @@
+# Custom metrics for PSS-nano
+apiVersion: telemetry.istio.io/v1alpha1
+kind: Telemetry
+metadata:
+  name: pss-nano-telemetry
+  namespace: pss-nano
+spec:
+  # Access logging
+  accessLogging:
+    - providers:
+        - name: envoy
+      filter:
+        expression: response.code >= 400
+
+  # Metrics
+  metrics:
+    - providers:
+        - name: prometheus
+      dimensions:
+        service_name:
+          value: "destination.service.name"
+        service_version:
+          value: "destination.service.version"
+        response_code:
+          value: "response.code"
+      overrides:
+        - match:
+            metric: REQUEST_COUNT
+          tagOverrides:
+            destination_port:
+              operation: REMOVE
+        - match:
+            metric: REQUEST_DURATION
+          tagOverrides:
+            destination_port:
+              operation: REMOVE
+
+  # Tracing
+  tracing:
+    - providers:
+        - name: jaeger
+      randomSamplingPercentage: 10.0
+      customTags:
+        environment:
+          literal:
+            value: "production"
+        service_name:
+          environment:
+            name: SERVICE_NAME

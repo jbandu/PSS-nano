@@ -1,0 +1,131 @@
+# Istio configuration for PSS-nano
+global:
+  # Logging level
+  logging:
+    level: "default:info"
+
+  # Proxy configuration
+  proxy:
+    resources:
+      requests:
+        cpu: 100m
+        memory: 128Mi
+      limits:
+        cpu: 500m
+        memory: 512Mi
+
+    # Enable access logs
+    accessLogFile: "/dev/stdout"
+    accessLogEncoding: "JSON"
+
+    # Auto inject sidecars
+    autoInject: enabled
+
+  # Enable mTLS by default
+  mtls:
+    enabled: true
+
+  # Tracer configuration
+  tracer:
+    zipkin:
+      address: "jaeger-collector.monitoring:9411"
+
+# Pilot (istiod) configuration
+pilot:
+  resources:
+    requests:
+      cpu: 500m
+      memory: 2048Mi
+    limits:
+      cpu: 2000m
+      memory: 4096Mi
+
+  # Enable telemetry v2
+  telemetry:
+    enabled: true
+    v2:
+      enabled: true
+
+  # Trace sampling
+  traceSampling: 10.0
+
+  autoscaleEnabled: true
+  autoscaleMin: 2
+  autoscaleMax: 5
+
+# Ingress gateway
+ingressGateways:
+  - name: istio-ingressgateway
+    enabled: true
+    labels:
+      app: istio-ingressgateway
+      istio: ingressgateway
+
+    replicaCount: 3
+
+    autoscaleEnabled: true
+    autoscaleMin: 3
+    autoscaleMax: 10
+
+    resources:
+      requests:
+        cpu: 500m
+        memory: 512Mi
+      limits:
+        cpu: 2000m
+        memory: 2048Mi
+
+    service:
+      type: LoadBalancer
+      ports:
+        - name: status-port
+          port: 15021
+          targetPort: 15021
+        - name: http2
+          port: 80
+          targetPort: 8080
+        - name: https
+          port: 443
+          targetPort: 8443
+        - name: tls
+          port: 15443
+          targetPort: 15443
+
+    # Pod anti-affinity
+    podAntiAffinityLabelSelector:
+      - key: app
+        operator: In
+        values: istio-ingressgateway
+        topologyKey: kubernetes.io/hostname
+
+# Egress gateway
+egressGateways:
+  - name: istio-egressgateway
+    enabled: true
+    labels:
+      app: istio-egressgateway
+      istio: egressgateway
+
+    replicaCount: 2
+
+    autoscaleEnabled: true
+    autoscaleMin: 2
+    autoscaleMax: 5
+
+    resources:
+      requests:
+        cpu: 250m
+        memory: 256Mi
+      limits:
+        cpu: 1000m
+        memory: 1024Mi
+
+# Enable policy checks
+policy:
+  enabled: true
+
+# Enable telemetry
+telemetry:
+  enabled: true
+  v2:
+    enabled: true

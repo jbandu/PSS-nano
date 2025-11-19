@@ -1,0 +1,71 @@
+apiVersion: networking.istio.io/v1beta1
+kind: Gateway
+metadata:
+  name: pss-nano-gateway
+  namespace: pss-nano
+spec:
+  selector:
+    istio: ingressgateway
+  servers:
+    # HTTP redirect to HTTPS
+    - port:
+        number: 80
+        name: http
+        protocol: HTTP
+      hosts:
+        - "*.pss-nano.com"
+      tls:
+        httpsRedirect: true
+
+    # HTTPS
+    - port:
+        number: 443
+        name: https
+        protocol: HTTPS
+      hosts:
+        - "api.pss-nano.com"
+        - "app.pss-nano.com"
+        - "admin.pss-nano.com"
+      tls:
+        mode: SIMPLE
+        credentialName: pss-nano-tls-cert
+---
+apiVersion: networking.istio.io/v1beta1
+kind: VirtualService
+metadata:
+  name: api-gateway
+  namespace: pss-nano
+spec:
+  hosts:
+    - "api.pss-nano.com"
+  gateways:
+    - pss-nano-gateway
+  http:
+    - match:
+        - uri:
+            prefix: "/api/v1"
+      route:
+        - destination:
+            host: api-gateway.pss-nano.svc.cluster.local
+            port:
+              number: 3000
+          weight: 100
+      retries:
+        attempts: 3
+        perTryTimeout: 10s
+        retryOn: "5xx,reset,connect-failure,refused-stream"
+      timeout: 30s
+      corsPolicy:
+        allowOrigins:
+          - exact: "https://app.pss-nano.com"
+        allowMethods:
+          - GET
+          - POST
+          - PUT
+          - DELETE
+          - PATCH
+        allowHeaders:
+          - authorization
+          - content-type
+          - x-request-id
+        maxAge: "24h"

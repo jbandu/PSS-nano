@@ -1,0 +1,35 @@
+base-service:
+  global:
+    environment: staging
+    imageTag: staging
+
+  replicaCount: 3
+
+  autoscaling:
+    enabled: true
+    minReplicas: 3
+    maxReplicas: 8
+
+  resources:
+    limits:
+      cpu: 750m
+      memory: 1.5Gi
+    requests:
+      cpu: 375m
+      memory: 768Mi
+
+  ingress:
+    hosts:
+      - host: api-staging.pss-nano.com
+        paths:
+          - path: /
+            pathType: Prefix
+    tls:
+      - secretName: api-gateway-staging-tls
+        hosts:
+          - api-staging.pss-nano.com
+
+  configMap:
+    data:
+      NODE_ENV: staging
+      LOG_LEVEL: info

@@ -1,0 +1,94 @@
+apiVersion: networking.istio.io/v1beta1
+kind: DestinationRule
+metadata:
+  name: api-gateway
+  namespace: pss-nano
+spec:
+  host: api-gateway.pss-nano.svc.cluster.local
+  trafficPolicy:
+    # Load balancer settings
+    loadBalancer:
+      consistentHash:
+        httpHeaderName: x-user-id
+
+    # Connection pool settings
+    connectionPool:
+      tcp:
+        maxConnections: 100
+      http:
+        http1MaxPendingRequests: 50
+        http2MaxRequests: 100
+        maxRequestsPerConnection: 2
+
+    # Outlier detection (circuit breaker)
+    outlierDetection:
+      consecutiveErrors: 5
+      interval: 30s
+      baseEjectionTime: 30s
+      maxEjectionPercent: 50
+      minHealthPercent: 40
+
+    # TLS settings
+    tls:
+      mode: ISTIO_MUTUAL
+
+  # Subsets for canary deployment
+  subsets:
+    - name: stable
+      labels:
+        version: stable
+    - name: canary
+      labels:
+        version: canary
+---
+apiVersion: networking.istio.io/v1beta1
+kind: DestinationRule
+metadata:
+  name: reservation-service
+  namespace: pss-nano
+spec:
+  host: reservation-service.pss-nano.svc.cluster.local
+  trafficPolicy:
+    loadBalancer:
+      simple: LEAST_REQUEST
+
+    connectionPool:
+      tcp:
+        maxConnections: 100
+      http:
+        http2MaxRequests: 100
+        maxRequestsPerConnection: 2
+
+    outlierDetection:
+      consecutiveErrors: 5
+      interval: 30s
+      baseEjectionTime: 30s
+      maxEjectionPercent: 50
+
+    tls:
+      mode: ISTIO_MUTUAL
+---
+apiVersion: networking.istio.io/v1beta1
+kind: DestinationRule
+metadata:
+  name: inventory-service
+  namespace: pss-nano
+spec:
+  host: inventory-service.pss-nano.svc.cluster.local
+  trafficPolicy:
+    loadBalancer:
+      simple: ROUND_ROBIN
+
+    connectionPool:
+      tcp:
+        maxConnections: 150
+      http:
+        http2MaxRequests: 150
+
+    outlierDetection:
+      consecutiveErrors: 3
+      interval: 20s
+      baseEjectionTime: 20s
+
+    tls:
+      mode: ISTIO_MUTUAL

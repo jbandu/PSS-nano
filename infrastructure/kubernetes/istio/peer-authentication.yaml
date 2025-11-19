@@ -1,0 +1,73 @@
+# Enable strict mTLS for entire namespace
+apiVersion: security.istio.io/v1beta1
+kind: PeerAuthentication
+metadata:
+  name: default
+  namespace: pss-nano
+spec:
+  mtls:
+    mode: STRICT
+---
+# Authorization policy - default deny
+apiVersion: security.istio.io/v1beta1
+kind: AuthorizationPolicy
+metadata:
+  name: deny-all
+  namespace: pss-nano
+spec:
+  {}
+---
+# Allow traffic from ingress gateway to API gateway
+apiVersion: security.istio.io/v1beta1
+kind: AuthorizationPolicy
+metadata:
+  name: allow-ingress-to-api-gateway
+  namespace: pss-nano
+spec:
+  selector:
+    matchLabels:
+      app: api-gateway
+  action: ALLOW
+  rules:
+    - from:
+        - source:
+            namespaces: ["istio-system"]
+            principals: ["cluster.local/ns/istio-system/sa/istio-ingressgateway-service-account"]
+      to:
+        - operation:
+            methods: ["GET", "POST", "PUT", "DELETE", "PATCH"]
+---
+# Allow API gateway to communicate with all services
+apiVersion: security.istio.io/v1beta1
+kind: AuthorizationPolicy
+metadata:
+  name: allow-api-gateway-to-services
+  namespace: pss-nano
+spec:
+  action: ALLOW
+  rules:
+    - from:
+        - source:
+            principals: ["cluster.local/ns/pss-nano/sa/api-gateway"]
+      to:
+        - operation:
+            methods: ["GET", "POST", "PUT", "DELETE", "PATCH"]
+---
+# Allow inter-service communication
+apiVersion: security.istio.io/v1beta1
+kind: AuthorizationPolicy
+metadata:
+  name: allow-inter-service
+  namespace: pss-nano
+spec:
+  action: ALLOW
+  rules:
+    - from:
+        - source:
+            namespaces: ["pss-nano"]
+      to:
+        - operation:
+            methods: ["GET", "POST", "PUT", "DELETE", "PATCH"]
+      when:
+        - key: request.headers[x-forwarded-for]
+          notValues: ["*"]

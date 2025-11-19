@@ -1,0 +1,76 @@
+base-service:
+  replicaCount: 2
+
+  image:
+    repository: pss-nano/reservation-service
+    pullPolicy: IfNotPresent
+    tag: latest
+
+  service:
+    type: ClusterIP
+    port: 3000
+    targetPort: 3000
+
+  resources:
+    limits:
+      cpu: 500m
+      memory: 1Gi
+    requests:
+      cpu: 250m
+      memory: 512Mi
+
+  autoscaling:
+    enabled: true
+    minReplicas: 2
+    maxReplicas: 10
+    targetCPUUtilizationPercentage: 70
+
+  configMap:
+    enabled: true
+    data:
+      NODE_ENV: production
+      PORT: "3000"
+      LOG_LEVEL: info
+      SERVICE_NAME: reservation-service
+
+  env:
+    - name: POSTGRES_HOST
+      valueFrom:
+        configMapKeyRef:
+          name: pss-nano-db-config
+          key: host
+    - name: POSTGRES_PORT
+      valueFrom:
+        configMapKeyRef:
+          name: pss-nano-db-config
+          key: port
+    - name: POSTGRES_DB
+      valueFrom:
+        configMapKeyRef:
+          name: pss-nano-db-config
+          key: database
+    - name: POSTGRES_USER
+      valueFrom:
+        secretKeyRef:
+          name: pss-nano-db-secret
+          key: username
+    - name: POSTGRES_PASSWORD
+      valueFrom:
+        secretKeyRef:
+          name: pss-nano-db-secret
+          key: password
+    - name: REDIS_HOST
+      valueFrom:
+        configMapKeyRef:
+          name: pss-nano-redis-config
+          key: host
+    - name: RABBITMQ_HOST
+      valueFrom:
+        configMapKeyRef:
+          name: pss-nano-rabbitmq-config
+          key: host
+
+  serviceAccount:
+    create: true
+    annotations:
+      iam.gke.io/gcp-service-account: reservation-service@PROJECT_ID.iam.gserviceaccount.com

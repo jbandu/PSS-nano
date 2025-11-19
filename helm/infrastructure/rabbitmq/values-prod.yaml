@@ -1,0 +1,16 @@
+replicaCount: 3
+
+persistence:
+  size: 16Gi
+
+resources:
+  limits:
+    cpu: 2000m
+    memory: 4Gi
+  requests:
+    cpu: 1000m
+    memory: 2Gi
+
+podDisruptionBudget:
+  create: true
+  minAvailable: 2

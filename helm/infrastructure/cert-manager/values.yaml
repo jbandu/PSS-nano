@@ -1,0 +1,57 @@
+# Cert-manager configuration
+installCRDs: true
+
+replicaCount: 2
+
+resources:
+  requests:
+    cpu: 100m
+    memory: 128Mi
+  limits:
+    cpu: 500m
+    memory: 512Mi
+
+# Pod disruption budget
+podDisruptionBudget:
+  enabled: true
+  minAvailable: 1
+
+# Metrics
+prometheus:
+  enabled: true
+  servicemonitor:
+    enabled: true
+    interval: 60s
+
+# Webhook
+webhook:
+  replicaCount: 2
+  resources:
+    requests:
+      cpu: 50m
+      memory: 64Mi
+    limits:
+      cpu: 200m
+      memory: 256Mi
+
+# CA Injector
+cainjector:
+  replicaCount: 2
+  resources:
+    requests:
+      cpu: 50m
+      memory: 64Mi
+    limits:
+      cpu: 200m
+      memory: 256Mi
+
+# Global settings
+global:
+  leaderElection:
+    namespace: cert-manager
+
+# Security
+securityContext:
+  runAsNonRoot: true
+  runAsUser: 1000
+  fsGroup: 1000

@@ -1,0 +1,122 @@
+# ArgoCD configuration for GitOps
+global:
+  image:
+    tag: v2.9.3
+
+server:
+  replicas: 2
+
+  resources:
+    requests:
+      cpu: 100m
+      memory: 128Mi
+    limits:
+      cpu: 500m
+      memory: 512Mi
+
+  ingress:
+    enabled: true
+    ingressClassName: nginx
+    annotations:
+      cert-manager.io/cluster-issuer: letsencrypt-prod
+      nginx.ingress.kubernetes.io/force-ssl-redirect: "true"
+      nginx.ingress.kubernetes.io/backend-protocol: "HTTPS"
+    hosts:
+      - argocd.pss-nano.com
+    tls:
+      - secretName: argocd-tls
+        hosts:
+          - argocd.pss-nano.com
+
+  config:
+    repositories: |
+      - type: git
+        url: https://github.com/pss-nano/pss-nano.git
+      - type: helm
+        name: bitnami
+        url: https://charts.bitnami.com/bitnami
+      - type: helm
+        name: prometheus-community
+        url: https://prometheus-community.github.io/helm-charts
+
+    # Resource customizations
+    resource.customizations: |
+      networking.k8s.io/Ingress:
+        health.lua: |
+          hs = {}
+          hs.status = "Healthy"
+          return hs
+
+  # Metrics
+  metrics:
+    enabled: true
+    serviceMonitor:
+      enabled: true
+
+repoServer:
+  replicas: 2
+
+  resources:
+    requests:
+      cpu: 100m
+      memory: 256Mi
+    limits:
+      cpu: 1000m
+      memory: 1Gi
+
+  metrics:
+    enabled: true
+    serviceMonitor:
+      enabled: true
+
+controller:
+  replicas: 1
+
+  resources:
+    requests:
+      cpu: 250m
+      memory: 512Mi
+    limits:
+      cpu: 1000m
+      memory: 2Gi
+
+  metrics:
+    enabled: true
+    serviceMonitor:
+      enabled: true
+
+dex:
+  enabled: false  # Using external OAuth provider
+
+redis:
+  enabled: true
+
+  resources:
+    requests:
+      cpu: 100m
+      memory: 128Mi
+    limits:
+      cpu: 500m
+      memory: 512Mi
+
+configs:
+  params:
+    server.insecure: false
+
+  cm:
+    # Application reconciliation timeout
+    timeout.reconciliation: 180s
+
+    # Application controller
+    application.instanceLabelKey: argocd.argoproj.io/instance
+
+  rbac:
+    policy.default: role:readonly
+    policy.csv: |
+      p, role:org-admin, applications, *, */*, allow
+      p, role:org-admin, clusters, get, *, allow
+      p, role:org-admin, repositories, get, *, allow
+      p, role:org-admin, repositories, create, *, allow
+      p, role:org-admin, repositories, update, *, allow
+      p, role:org-admin, repositories, delete, *, allow
+      g, admin-team, role:org-admin
