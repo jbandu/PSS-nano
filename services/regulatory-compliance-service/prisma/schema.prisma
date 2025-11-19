@@ -1,0 +1,1707 @@
+// Regulatory Compliance Service Schema
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ============================================================================
+// US TSA SECURE FLIGHT
+// ============================================================================
+
+model SecureFlightRecord {
+  id                    String                @id @default(uuid())
+  pnr                   String
+  ticketNumber          String?
+  flightNumber          String
+  flightDate            DateTime
+  origin                String
+  destination           String
+
+  // Passenger information
+  lastName              String
+  firstName             String
+  middleName            String?
+  suffix                String?
+  dateOfBirth           DateTime
+  gender                String                // M, F, X (unspecified)
+
+  // Redress and Known Traveler
+  redressNumber         String?
+  knownTravelerNumber   String?               // TSA PreCheck KTN
+
+  // Transmission
+  transmissionId        String                @unique
+  transmittedAt         DateTime?
+  acknowledgedAt        DateTime?
+
+  // TSA Response
+  responseReceived      Boolean               @default(false)
+  boardingPassPrintingInhibit Boolean         @default(false) // BPPI
+  isSelectee            Boolean               @default(false) // SSSS
+  isTsaPreCheck         Boolean               @default(false)
+  clearanceStatus       ClearanceStatus?
+
+  // Watch list matching
+  watchListMatch        Boolean               @default(false)
+  watchListCategory     String?
+  matchScore            Float?
+
+  // Resolution
+  isResolved            Boolean               @default(false)
+  resolvedAt            DateTime?
+  resolvedBy            String?
+  resolutionNotes       String?               @db.Text
+
+  // Audit
+  retryCount            Int                   @default(0)
+  errorMessage          String?
+  metadata              Json?
+  createdAt             DateTime              @default(now())
+  updatedAt             DateTime              @updatedAt
+
+  @@index([pnr])
+  @@index([flightNumber, flightDate])
+  @@index([transmissionId])
+  @@index([clearanceStatus])
+  @@index([isSelectee])
+  @@index([knownTravelerNumber])
+}
+
+enum ClearanceStatus {
+  CLEARED
+  INHIBITED
+  NOT_CLEARED
+  PENDING
+  ERROR
+}
+
+model KnownTravelerProgram {
+  id                    String                @id @default(uuid())
+  passengerId           String
+  programType           KtnProgramType
+  membershipNumber      String                @unique
+  firstName             String
+  lastName              String
+  dateOfBirth           DateTime
+  enrolledDate          DateTime
+  expiryDate            DateTime?
+  status                MembershipStatus
+  verifiedAt            DateTime?
+  lastUsedAt            DateTime?
+  usageCount            Int                   @default(0)
+  createdAt             DateTime              @default(now())
+  updatedAt             DateTime              @updatedAt
+
+  @@index([membershipNumber])
+  @@index([passengerId])
+  @@index([programType])
+  @@index([status])
+}
+
+enum KtnProgramType {
+  TSA_PRECHECK
+  GLOBAL_ENTRY
+  NEXUS
+  SENTRI
+  CLEAR
+  SMARTGATE
+}
+
+enum MembershipStatus {
+  ACTIVE
+  EXPIRED
+  SUSPENDED
+  REVOKED
+  PENDING_VERIFICATION
+}
+
+// ============================================================================
+// APIS (ADVANCE PASSENGER INFORMATION SYSTEM)
+// ============================================================================
+
+model ApisSubmission {
+  id                    String                @id @default(uuid())
+  submissionId          String                @unique
+  country               ApisCountry
+  flightNumber          String
+  flightDate            DateTime
+  origin                String
+  destination           String
+  aircraftRegistration  String?
+  direction             ApisDirection
+
+  // Submission metadata
+  submittedAt           DateTime?
+  acknowledgedAt        DateTime?
+  status                ApisStatus
+  responseCode          String?
+  responseMessage       String?
+  errorMessage          String?
+
+  // Retry logic
+  retryCount            Int                   @default(0)
+  nextRetryAt           DateTime?
+
+  createdAt             DateTime              @default(now())
+  updatedAt             DateTime              @updatedAt
+
+  passengers            ApisPassenger[]
+  crew                  ApisCrew[]
+
+  @@index([submissionId])
+  @@index([country])
+  @@index([flightNumber, flightDate])
+  @@index([status])
+  @@index([submittedAt])
+}
+
+enum ApisCountry {
+  USA_CBP              // US Customs and Border Protection
+  CANADA_CBSA          // Canada Border Services Agency
+  UK_BORDER_FORCE      // UK eBorders
+  EU_APIS              // European Union
+  SCHENGEN_EES         // Schengen Entry/Exit System
+  MEXICO_INM           // Mexican Immigration
+  AUSTRALIA_ABF        // Australian Border Force
+  NEW_ZEALAND_CUSTOMS  // New Zealand Customs
+  JAPAN_IMMIGRATION    // Japan Immigration
+  CHINA_IMMIGRATION    // China Immigration
+  INDIA_IMMIGRATION    // India Immigration
+  UAE_IMMIGRATION      // UAE Immigration
+  CARICOM              // Caribbean Community
+}
+
+enum ApisDirection {
+  INBOUND
+  OUTBOUND
+  TRANSIT
+}
+
+enum ApisStatus {
+  PENDING
+  SUBMITTED
+  ACKNOWLEDGED
+  ACCEPTED
+  REJECTED
+  PARTIAL_ACCEPT
+  ERROR
+  CANCELLED
+}
+
+model ApisPassenger {
+  id                    String                @id @default(uuid())
+  submissionId          String
+  pnr                   String
+  ticketNumber          String?
+
+  // Name
+  lastName              String
+  firstName             String
+  middleName            String?
+
+  // Demographics
+  dateOfBirth           DateTime
+  gender                String
+  nationality           String                // ISO 3166-1 alpha-2
+
+  // Travel document
+  documentType          TravelDocumentType
+  documentNumber        String
+  issuingCountry        String
+  expiryDate            DateTime?
+
+  // Visa (if required)
+  visaNumber            String?
+  visaType              String?
+  visaIssuingCountry    String?
+  visaExpiryDate        DateTime?
+
+  // Destination address
+  destinationAddress    String?
+  destinationCity       String?
+  destinationState      String?
+  destinationPostal     String?
+  destinationCountry    String?
+
+  // Port of first arrival (for USA)
+  portOfFirstArrival    String?
+
+  // Status
+  responseStatus        String?
+  authorityToCarry      Boolean?              // UK eBorders
+  boardingDenied        Boolean               @default(false)
+  denialReason          String?
+
+  createdAt             DateTime              @default(now())
+  updatedAt             DateTime              @updatedAt
+
+  submission            ApisSubmission        @relation(fields: [submissionId], references: [id], onDelete: Cascade)
+
+  @@index([submissionId])
+  @@index([pnr])
+  @@index([documentNumber])
+  @@index([nationality])
+}
+
+enum TravelDocumentType {
+  PASSPORT
+  NATIONAL_ID
+  TRAVEL_DOCUMENT
+  REFUGEE_DOCUMENT
+  MILITARY_ID
+  CREW_MEMBER_LICENSE
+  CERTIFICATE_OF_IDENTITY
+  EMERGENCY_PASSPORT
+}
+
+model ApisCrew {
+  id                    String                @id @default(uuid())
+  submissionId          String
+  employeeId            String?
+
+  // Name
+  lastName              String
+  firstName             String
+  middleName            String?
+
+  // Demographics
+  dateOfBirth           DateTime
+  gender                String
+  nationality           String
+
+  // Document
+  documentType          TravelDocumentType
+  documentNumber        String
+  issuingCountry        String
+  expiryDate            DateTime?
+
+  // Crew specific
+  crewPosition          CrewPosition
+  licenseNumber         String?
+
+  createdAt             DateTime              @default(now())
+
+  submission            ApisSubmission        @relation(fields: [submissionId], references: [id], onDelete: Cascade)
+
+  @@index([submissionId])
+  @@index([employeeId])
+}
+
+enum CrewPosition {
+  CAPTAIN
+  FIRST_OFFICER
+  FLIGHT_ENGINEER
+  PURSER
+  FLIGHT_ATTENDANT
+  CABIN_CREW
+  LOADMASTER
+  RELIEF_PILOT
+}
+
+// ============================================================================
+// TRAVEL DOCUMENT VERIFICATION
+// ============================================================================
+
+model TravelDocumentCheck {
+  id                    String                @id @default(uuid())
+  pnr                   String
+  passengerName         String
+  flightNumber          String
+  flightDate            DateTime
+  origin                String
+  destination           String
+  transits              String[]              // Transit countries
+
+  // Document information
+  documentType          TravelDocumentType
+  documentNumber        String
+  issuingCountry        String
+  nationality           String
+  dateOfBirth           DateTime
+  expiryDate            DateTime?
+
+  // Visa information
+  hasVisa               Boolean               @default(false)
+  visaNumber            String?
+  visaType              String?
+  visaExpiryDate        DateTime?
+
+  // Validation
+  validationSource      ValidationSource
+  validationResult      ValidationResult
+  validationMessage     String?               @db.Text
+  validationDetails     Json?
+
+  // Requirements
+  visaRequired          Boolean?
+  eVisaAvailable        Boolean?
+  visaOnArrival         Boolean?
+  passportValidityMonths Int?                 // Minimum months validity required
+
+  // Health requirements
+  vaccinationRequired   Boolean?
+  requiredVaccinations  String[]
+  covidTestRequired     Boolean?
+  healthFormRequired    Boolean?
+
+  // Warnings
+  hasWarnings           Boolean               @default(false)
+  warnings              Json?
+
+  // Results
+  isOkToBoard           Boolean               @default(false)
+  restrictionReason     String?
+
+  validatedAt           DateTime              @default(now())
+  validatedBy           String?
+  createdAt             DateTime              @default(now())
+
+  @@index([pnr])
+  @@index([flightNumber, flightDate])
+  @@index([documentNumber])
+  @@index([validationResult])
+  @@index([isOkToBoard])
+}
+
+enum ValidationSource {
+  TIMATIC              // IATA Timatic
+  SHERPA               // Sherpa (OnwardTicket)
+  MANUAL               // Manual check
+  INTERNAL             // Internal database
+  GOVERNMENT_API       // Direct government API
+}
+
+enum ValidationResult {
+  OK
+  WARNING
+  ERROR
+  REJECTED
+  MANUAL_REVIEW
+  PENDING
+}
+
+model TimaticRule {
+  id                    String                @id @default(uuid())
+  ruleId                String                @unique
+  nationality           String
+  destination           String
+  transit               String?
+
+  // Passport requirements
+  passportRequired      Boolean               @default(true)
+  minimumValidity       Int?                  // Months
+  blankedPages          Int?
+
+  // Visa requirements
+  visaRequired          Boolean               @default(false)
+  visaType              String?
+  eVisaAvailable        Boolean               @default(false)
+  visaOnArrival         Boolean               @default(false)
+  visaFee               Float?
+  visaCurrency          String?
+  processingDays        Int?
+
+  // Health requirements
+  yellowFeverRequired   Boolean               @default(false)
+  covidVaccineRequired  Boolean               @default(false)
+  covidTestRequired     Boolean               @default(false)
+  testTimeframe         Int?                  // Hours before departure
+  malariaRisk           Boolean               @default(false)
+
+  // Additional
+  onwardTicketRequired  Boolean               @default(false)
+  proofOfFundsRequired  Boolean               @default(false)
+
+  // Metadata
+  effectiveDate         DateTime
+  lastUpdated           DateTime
+  source                String                @default("TIMATIC")
+  notes                 String?               @db.Text
+
+  createdAt             DateTime              @default(now())
+  updatedAt             DateTime              @updatedAt
+
+  @@unique([nationality, destination, transit])
+  @@index([nationality])
+  @@index([destination])
+  @@index([effectiveDate])
+}
+
+model HealthCertificate {
+  id                    String                @id @default(uuid())
+  pnr                   String
+  passengerName         String
+  certificateType       HealthCertificateType
+  certificateNumber     String?
+
+  // Vaccination details
+  vaccineType           String?               // COVID-19, Yellow Fever, etc.
+  vaccineBrand          String?
+  doseNumber            Int?
+  totalDoses            Int?
+  vaccinationDate       DateTime?
+
+  // Test details
+  testType              String?               // PCR, Antigen, etc.
+  testDate              DateTime?
+  testResult            String?               // Negative, Positive
+
+  // Certificate validation
+  issuer                String?
+  issuingCountry        String?
+  isVerified            Boolean               @default(false)
+  verifiedAt            DateTime?
+  verificationMethod    String?               // QR code, Digital signature
+
+  // Validity
+  validFrom             DateTime?
+  validUntil            DateTime?
+
+  // Upload
+  documentUrl           String?
+  documentHash          String?
+
+  createdAt             DateTime              @default(now())
+  updatedAt             DateTime              @updatedAt
+
+  @@index([pnr])
+  @@index([certificateType])
+  @@index([isVerified])
+}
+
+enum HealthCertificateType {
+  COVID_VACCINATION
+  COVID_TEST
+  YELLOW_FEVER
+  POLIO
+  MENINGITIS
+  CHOLERA
+  OTHER_VACCINATION
+  HEALTH_DECLARATION
+}
+
+// ============================================================================
+// DANGEROUS GOODS COMPLIANCE
+// ============================================================================
+
+model DangerousGoodsDeclaration {
+  id                    String                @id @default(uuid())
+  pnr                   String
+  passengerName         String
+  flightNumber          String
+  flightDate            DateTime
+
+  // Declaration
+  hasDangerousGoods     Boolean               @default(false)
+  hasRestricted Items   Boolean               @default(false)
+  declarationType       DeclarationType
+
+  // Items
+  items                 Json?                 // Array of declared items
+
+  // Approval
+  approvalRequired      Boolean               @default(false)
+  isApproved            Boolean?
+  approvedBy            String?
+  approvedAt            DateTime?
+  approvalReference     String?
+
+  // Notification
+  crewNotified          Boolean               @default(false)
+  notocGenerated        Boolean               @default(false) // Notice to Captain
+  notocReference        String?
+
+  // Denial
+  isDenied              Boolean               @default(false)
+  denialReason          String?
+
+  declaredAt            DateTime              @default(now())
+  declaredBy            String?
+
+  createdAt             DateTime              @default(now())
+  updatedAt             DateTime              @updatedAt
+
+  @@index([pnr])
+  @@index([flightNumber, flightDate])
+  @@index([hasDangerousGoods])
+}
+
+enum DeclarationType {
+  PASSENGER_BAGGAGE
+  CARGO
+  MAIL
+  CREW
+}
+
+model RestrictedItem {
+  id                    String                @id @default(uuid())
+  itemCode              String                @unique
+  itemName              String
+  category              RestrictedCategory
+  iataClass             String?               // Dangerous goods class
+  unNumber              String?               // UN number
+  packingGroup          String?               // I, II, III
+
+  // Restrictions
+  prohibitedCarryOn     Boolean               @default(false)
+  prohibitedChecked     Boolean               @default(false)
+  prohibitedCargo       Boolean               @default(false)
+
+  // Allowed with approval
+  allowedWithApproval   Boolean               @default(false)
+  approvalAuthority     String?
+
+  // Quantity limits
+  maxQuantityPassenger  String?               // e.g., "100ml", "2kg"
+  maxQuantityCargo      String?
+
+  // Special instructions
+  packingInstructions   String?               @db.Text
+  handlingInstructions  String?               @db.Text
+
+  // Metadata
+  iataRegulation        String?
+  icaoRegulation        String?
+  effectiveDate         DateTime?
+
+  isActive              Boolean               @default(true)
+  createdAt             DateTime              @default(now())
+  updatedAt             DateTime              @updatedAt
+
+  @@index([itemCode])
+  @@index([category])
+  @@index([iataClass])
+}
+
+enum RestrictedCategory {
+  EXPLOSIVES
+  GASES
+  FLAMMABLE_LIQUIDS
+  FLAMMABLE_SOLIDS
+  OXIDIZING_SUBSTANCES
+  TOXIC_SUBSTANCES
+  RADIOACTIVE_MATERIALS
+  CORROSIVES
+  MISCELLANEOUS
+  LITHIUM_BATTERIES
+  FIREARMS
+  SHARP_OBJECTS
+  SPORTING_EQUIPMENT
+  TOOLS
+  OTHER
+}
+
+// ============================================================================
+// CUSTOMS DECLARATIONS
+// ============================================================================
+
+model CustomsDeclaration {
+  id                    String                @id @default(uuid())
+  pnr                   String
+  passengerName         String
+  flightNumber          String
+  flightDate            DateTime
+  arrivalCountry        String
+
+  // Declaration
+  hasDeclaredGoods      Boolean               @default(false)
+  goodsValue            Float?
+  goodsCurrency         String?
+
+  // Duty free allowances
+  exceedsDutyFree       Boolean               @default(false)
+  dutyOwed              Float?
+  dutyCurrency          String?
+
+  // Specific categories
+  hasAlcohol            Boolean               @default(false)
+  hasTobacco            Boolean               @default(false)
+  hasCurrency           Boolean               @default(false)
+  currencyAmount        Float?
+  hasFood               Boolean               @default(false)
+  hasPlants             Boolean               @default(false)
+  hasAnimals            Boolean               @default(false)
+
+  // Agricultural products
+  hasAgriculturalGoods  Boolean               @default(false)
+  agriculturalItems     Json?
+
+  // Commercial goods
+  isCommercial          Boolean               @default(false)
+  commercialValue       Float?
+
+  // Declaration form
+  formType              String?               // e.g., "6059" for US
+  formData              Json?
+  electronicSignature   String?
+
+  // Submission
+  submittedAt           DateTime?
+  submittedBy           String?
+
+  // Processing
+  requiresInspection    Boolean               @default(false)
+  inspectionNotes       String?
+
+  createdAt             DateTime              @default(now())
+  updatedAt             DateTime              @updatedAt
+
+  @@index([pnr])
+  @@index([flightNumber, flightDate])
+  @@index([arrivalCountry])
+}
+
+// ============================================================================
+// SANCTIONS & WATCHLIST SCREENING
+// ============================================================================
+
+model SanctionsScreening {
+  id                    String                @id @default(uuid())
+  screeningId           String                @unique
+  entityType            EntityType
+
+  // Entity details
+  fullName              String
+  aliases               String[]
+  dateOfBirth           DateTime?
+  nationality           String?
+  passportNumber        String?
+  address               String?
+
+  // Transaction details
+  pnr                   String?
+  bookingReference      String?
+  transactionAmount     Float?
+  transactionCurrency   String?
+
+  // Screening
+  screenedAt            DateTime              @default(now())
+  screenedBy            String?
+
+  // Results
+  hasMatch              Boolean               @default(false)
+  matchConfidence       Float?                // 0-1 score
+  matchedLists          String[]              // OFAC, EU, UN, etc.
+
+  // Matched entity details
+  matchedEntity         Json?
+  matchReason           String?
+
+  // Status
+  status                ScreeningStatus
+  riskLevel             RiskLevel?
+
+  // Resolution
+  requiresReview        Boolean               @default(false)
+  reviewedBy            String?
+  reviewedAt            DateTime?
+  reviewNotes           String?               @db.Text
+  falsePositive         Boolean               @default(false)
+
+  // Actions taken
+  transactionBlocked    Boolean               @default(false)
+  authoritiesNotified   Boolean               @default(false)
+  notificationDate      DateTime?
+
+  // Audit
+  metadata              Json?
+  createdAt             DateTime              @default(now())
+  updatedAt             DateTime              @updatedAt
+
+  @@index([screeningId])
+  @@index([pnr])
+  @@index([hasMatch])
+  @@index([status])
+  @@index([riskLevel])
+  @@index([screenedAt])
+}
+
+enum EntityType {
+  PASSENGER
+  CREW
+  CUSTOMER
+  AGENT
+  SUPPLIER
+  ORGANIZATION
+}
+
+enum ScreeningStatus {
+  PENDING
+  SCREENED
+  MATCHED
+  CLEARED
+  BLOCKED
+  UNDER_REVIEW
+}
+
+enum RiskLevel {
+  LOW
+  MEDIUM
+  HIGH
+  CRITICAL
+}
+
+model SanctionsList {
+  id                    String                @id @default(uuid())
+  listId                String                @unique
+  listType              SanctionsListType
+  issuingAuthority      String
+  country               String?
+
+  // Entry details
+  entityName            String
+  aliases               String[]
+  entityType            String?               // Individual, Entity, Vessel
+  dateOfBirth           DateTime?
+  nationality           String?
+  identificationNumbers String[]
+  addresses             Json?
+
+  // Sanctions details
+  sanctionType          String?               // SDN, Non-SDN, Sectoral, etc.
+  programs              String[]              // IRAN, CUBA, UKRAINE, etc.
+  remarks               String?               @db.Text
+
+  // Metadata
+  addedDate             DateTime
+  lastUpdated           DateTime
+  effectiveDate         DateTime?
+  expiryDate            DateTime?
+
+  // Status
+  isActive              Boolean               @default(true)
+
+  createdAt             DateTime              @default(now())
+  updatedAt             DateTime              @updatedAt
+
+  @@index([listType])
+  @@index([entityName])
+  @@index([isActive])
+  @@index([lastUpdated])
+}
+
+enum SanctionsListType {
+  OFAC_SDN             // US OFAC Specially Designated Nationals
+  OFAC_NON_SDN         // US OFAC Non-SDN
+  OFAC_SECTORAL        // US OFAC Sectoral Sanctions
+  EU_SANCTIONS         // European Union
+  UN_SANCTIONS         // United Nations
+  UK_SANCTIONS         // UK HM Treasury
+  FATF_BLACKLIST       // Financial Action Task Force
+  INTERPOL             // Interpol Red Notices
+  COUNTRY_SPECIFIC     // Country-specific lists
+}
+
+// ============================================================================
+// DATA PRIVACY COMPLIANCE (GDPR, CCPA)
+// ============================================================================
+
+model DataPrivacyConsent {
+  id                    String                @id @default(uuid())
+  customerId            String
+  consentType           ConsentType
+  purpose               String[]              // Marketing, Analytics, Profiling, etc.
+
+  // Consent details
+  consentGiven          Boolean
+  consentDate           DateTime
+  consentMethod         String?               // Website, App, Email, In-person
+  consentVersion        String?               // Privacy policy version
+
+  // Withdrawal
+  isWithdrawn           Boolean               @default(false)
+  withdrawnDate         DateTime?
+  withdrawnMethod       String?
+
+  // Geographic scope
+  jurisdiction          String?               // EU, California, etc.
+
+  // Audit
+  ipAddress             String?
+  userAgent             String?
+  metadata              Json?
+
+  createdAt             DateTime              @default(now())
+  updatedAt             DateTime              @updatedAt
+
+  @@index([customerId])
+  @@index([consentType])
+  @@index([consentGiven])
+  @@index([jurisdiction])
+}
+
+enum ConsentType {
+  MARKETING_COMMUNICATIONS
+  ANALYTICS_TRACKING
+  PERSONALIZATION
+  PROFILING
+  THIRD_PARTY_SHARING
+  LOCATION_TRACKING
+  BIOMETRIC_DATA
+  COOKIES
+  DATA_PROCESSING
+}
+
+model DataSubjectRequest {
+  id                    String                @id @default(uuid())
+  requestId             String                @unique
+  customerId            String
+  requestType           DataSubjectRequestType
+
+  // Requestor details
+  firstName             String
+  lastName              String
+  email                 String
+  phone                 String?
+
+  // Verification
+  isVerified            Boolean               @default(false)
+  verifiedAt            DateTime?
+  verificationMethod    String?
+
+  // Request details
+  scope                 String[]              // What data/processing
+  reason                String?               @db.Text
+
+  // Processing
+  status                DsrStatus
+  assignedTo            String?
+  dueDate               DateTime              // 30 days for GDPR
+  completedDate         DateTime?
+
+  // Response
+  responseData          Json?                 // For access/portability requests
+  responseMethod        String?               // Email, Portal, Mail
+  responseNotes         String?               @db.Text
+
+  // Denial (if applicable)
+  isDenied              Boolean               @default(false)
+  denialReason          String?
+
+  // Audit
+  createdAt             DateTime              @default(now())
+  updatedAt             DateTime              @updatedAt
+
+  @@index([requestId])
+  @@index([customerId])
+  @@index([requestType])
+  @@index([status])
+  @@index([dueDate])
+}
+
+enum DataSubjectRequestType {
+  ACCESS               // Right to access
+  RECTIFICATION        // Right to rectify
+  ERASURE              // Right to be forgotten
+  PORTABILITY          // Right to data portability
+  RESTRICTION          // Right to restrict processing
+  OBJECTION            // Right to object
+  WITHDRAW_CONSENT     // Withdraw consent
+}
+
+enum DsrStatus {
+  SUBMITTED
+  UNDER_VERIFICATION
+  VERIFIED
+  IN_PROGRESS
+  COMPLETED
+  DENIED
+  PARTIALLY_COMPLETED
+}
+
+model DataRetentionPolicy {
+  id                    String                @id @default(uuid())
+  policyId              String                @unique
+  dataCategory          DataCategory
+  description           String?
+
+  // Retention period
+  retentionPeriod       Int                   // Days
+  retentionReason       String                // Legal, Business, etc.
+  legalBasis            String?               // GDPR Article 6(1)(b), etc.
+
+  // After retention
+  disposalMethod        DisposalMethod
+  anonymizationMethod   String?
+
+  // Scope
+  jurisdiction          String[]
+  dataTypes             String[]
+
+  // Metadata
+  effectiveDate         DateTime
+  reviewDate            DateTime?
+  isActive              Boolean               @default(true)
+
+  createdAt             DateTime              @default(now())
+  updatedAt             DateTime              @updatedAt
+
+  @@index([policyId])
+  @@index([dataCategory])
+  @@index([isActive])
+}
+
+enum DataCategory {
+  PERSONAL_IDENTIFICATION
+  CONTACT_INFORMATION
+  FINANCIAL_DATA
+  TRAVEL_HISTORY
+  PAYMENT_INFORMATION
+  HEALTH_DATA
+  BIOMETRIC_DATA
+  LOCATION_DATA
+  BEHAVIORAL_DATA
+  MARKETING_PREFERENCES
+  COMMUNICATION_HISTORY
+  TRANSACTION_RECORDS
+  AUDIT_LOGS
+}
+
+enum DisposalMethod {
+  DELETION
+  ANONYMIZATION
+  PSEUDONYMIZATION
+  AGGREGATION
+  ARCHIVAL
+}
+
+model DataBreachRecord {
+  id                    String                @id @default(uuid())
+  incidentId            String                @unique
+  breachType            BreachType
+
+  // Discovery
+  discoveredAt          DateTime
+  discoveredBy          String
+
+  // Details
+  affectedRecords       Int
+  affectedIndividuals   Int?
+  dataCategories        String[]
+
+  // Assessment
+  riskLevel             RiskLevel
+  containmentStatus     ContainmentStatus
+
+  // Notification requirements
+  requiresAuthorityNotification Boolean      @default(false)
+  authorityNotifiedAt   DateTime?
+  requiresUserNotification Boolean           @default(false)
+  usersNotifiedAt       DateTime?
+
+  // 72-hour rule (GDPR)
+  notificationDeadline  DateTime?
+  metDeadline           Boolean?
+
+  // Root cause
+  rootCause             String?               @db.Text
+  affectedSystems       String[]
+
+  // Remediation
+  remediationSteps      Json?
+  remediationCompleted  Boolean               @default(false)
+  remediationDate       DateTime?
+
+  // Lessons learned
+  lessonsLearned        String?               @db.Text
+  preventiveMeasures    String?               @db.Text
+
+  createdAt             DateTime              @default(now())
+  updatedAt             DateTime              @updatedAt
+
+  @@index([incidentId])
+  @@index([breachType])
+  @@index([riskLevel])
+  @@index([discoveredAt])
+}
+
+enum BreachType {
+  UNAUTHORIZED_ACCESS
+  DATA_LOSS
+  DATA_THEFT
+  RANSOMWARE
+  PHISHING
+  INSIDER_THREAT
+  ACCIDENTAL_DISCLOSURE
+  SYSTEM_VULNERABILITY
+  THIRD_PARTY_BREACH
+}
+
+enum ContainmentStatus {
+  ONGOING
+  CONTAINED
+  RESOLVED
+  UNDER_INVESTIGATION
+}
+
+// ============================================================================
+// FINANCIAL REGULATIONS (PCI-DSS, AML, KYC)
+// ============================================================================
+
+model PciComplianceRecord {
+  id                    String                @id @default(uuid())
+  assessmentId          String                @unique
+  assessmentType        PciAssessmentType
+  assessmentDate        DateTime
+  assessedBy            String
+
+  // Scope
+  merchantLevel         PciMerchantLevel
+  environment           String[]              // Production, Staging, etc.
+
+  // Requirements (12 PCI-DSS requirements)
+  requirement1          ComplianceScore       // Firewall
+  requirement2          ComplianceScore       // No default passwords
+  requirement3          ComplianceScore       // Protect stored data
+  requirement4          ComplianceScore       // Encrypt transmission
+  requirement5          ComplianceScore       // Antivirus
+  requirement6          ComplianceScore       // Secure systems
+  requirement7          ComplianceScore       // Restrict access
+  requirement8          ComplianceScore       // Unique IDs
+  requirement9          ComplianceScore       // Physical access
+  requirement10         ComplianceScore       // Track access
+  requirement11         ComplianceScore       // Test security
+  requirement12         ComplianceScore       // Security policy
+
+  // Overall
+  overallScore          ComplianceScore
+  isCompliant           Boolean               @default(false)
+
+  // Certificate
+  certificateIssued     Boolean               @default(false)
+  certificateNumber     String?
+  validUntil            DateTime?
+
+  // Findings
+  criticalFindings      Json?
+  majorFindings         Json?
+  minorFindings         Json?
+
+  // Remediation
+  remediationPlan       String?               @db.Text
+  remediationDeadline   DateTime?
+  remediationCompleted  Boolean               @default(false)
+
+  // Next assessment
+  nextAssessmentDue     DateTime
+
+  createdAt             DateTime              @default(now())
+  updatedAt             DateTime              @updatedAt
+
+  @@index([assessmentId])
+  @@index([overallScore])
+  @@index([isCompliant])
+  @@index([assessmentDate])
+}
+
+enum PciAssessmentType {
+  SAQ_A                // E-commerce, no card data storage
+  SAQ_B                // Imprint machines
+  SAQ_C                // Payment app, no storage
+  SAQ_D                // All others
+  FULL_AUDIT           // Level 1 merchants
+}
+
+enum PciMerchantLevel {
+  LEVEL_1              // >6M transactions/year
+  LEVEL_2              // 1-6M transactions/year
+  LEVEL_3              // 20K-1M transactions/year
+  LEVEL_4              // <20K transactions/year
+}
+
+enum ComplianceScore {
+  COMPLIANT
+  NON_COMPLIANT
+  NOT_APPLICABLE
+  COMPENSATING_CONTROLS
+}
+
+model AmlTransaction {
+  id                    String                @id @default(uuid())
+  transactionId         String                @unique
+  customerId            String
+
+  // Transaction details
+  amount                Float
+  currency              String
+  transactionType       TransactionType
+  paymentMethod         String
+
+  // Parties
+  originatorName        String
+  originatorCountry     String?
+  beneficiaryName       String
+  beneficiaryCountry    String?
+
+  // Risk scoring
+  riskScore             Float                 // 0-100
+  riskLevel             RiskLevel
+  riskFactors           String[]
+
+  // Flags
+  isHighValue           Boolean               @default(false) // >$10,000
+  isStructured          Boolean               @default(false) // Structuring/smurfing
+  isUnusualPattern      Boolean               @default(false)
+  isHighRiskCountry     Boolean               @default(false)
+  isPep                 Boolean               @default(false) // Politically Exposed Person
+
+  // Screening
+  sanctionsScreened     Boolean               @default(false)
+  sanctionsMatch        Boolean               @default(false)
+
+  // Status
+  status                AmlStatus
+  requiresReview        Boolean               @default(false)
+  reviewedBy            String?
+  reviewedAt            DateTime?
+  reviewNotes           String?               @db.Text
+
+  // SAR (Suspicious Activity Report)
+  sarFiled              Boolean               @default(false)
+  sarReference          String?
+  sarFiledAt            DateTime?
+
+  transactionDate       DateTime
+  createdAt             DateTime              @default(now())
+  updatedAt             DateTime              @updatedAt
+
+  @@index([transactionId])
+  @@index([customerId])
+  @@index([riskLevel])
+  @@index([status])
+  @@index([requiresReview])
+  @@index([sarFiled])
+  @@index([transactionDate])
+}
+
+enum TransactionType {
+  BOOKING
+  REFUND
+  EXCHANGE
+  ANCILLARY
+  UPGRADE
+  CHANGE_FEE
+  EXCESS_BAGGAGE
+  OTHER
+}
+
+enum AmlStatus {
+  CLEARED
+  UNDER_REVIEW
+  FLAGGED
+  BLOCKED
+  REPORTED
+}
+
+model KycRecord {
+  id                    String                @id @default(uuid())
+  customerId            String                @unique
+
+  // Customer information
+  firstName             String
+  lastName              String
+  dateOfBirth           DateTime
+  nationality           String
+
+  // Identification
+  idType                String
+  idNumber              String
+  idIssuingCountry      String
+  idExpiryDate          DateTime?
+
+  // Address
+  address               String
+  city                  String
+  state                 String?
+  postalCode            String
+  country               String
+  addressVerified       Boolean               @default(false)
+
+  // Risk assessment
+  riskLevel             RiskLevel
+  isPep                 Boolean               @default(false) // Politically Exposed Person
+  pepRelationship       String?
+  isHighRiskCountry     Boolean               @default(false)
+
+  // Verification
+  verificationLevel     VerificationLevel
+  verifiedBy            String?
+  verifiedAt            DateTime?
+  verificationMethod    String?
+
+  // Documents
+  documentsCollected    Json?
+  documentsVerified     Boolean               @default(false)
+
+  // Review
+  lastReviewDate        DateTime?
+  nextReviewDue         DateTime
+  reviewFrequency       Int                   @default(365) // Days
+
+  // Status
+  status                KycStatus
+  rejectionReason       String?
+
+  createdAt             DateTime              @default(now())
+  updatedAt             DateTime              @updatedAt
+
+  @@index([customerId])
+  @@index([riskLevel])
+  @@index([status])
+  @@index([isPep])
+  @@index([nextReviewDue])
+}
+
+enum VerificationLevel {
+  BASIC                // Email/phone only
+  STANDARD             // ID verification
+  ENHANCED             // Enhanced due diligence
+  NONE
+}
+
+enum KycStatus {
+  PENDING
+  IN_PROGRESS
+  VERIFIED
+  REJECTED
+  EXPIRED
+  UNDER_REVIEW
+}
+
+// ============================================================================
+// AVIATION SAFETY COMPLIANCE
+// ============================================================================
+
+model CrewRestCompliance {
+  id                    String                @id @default(uuid())
+  crewMemberId          String
+  flightNumber          String
+  flightDate            DateTime
+
+  // Duty period
+  dutyStartTime         DateTime
+  dutyEndTime           DateTime?
+  dutyHours             Float?
+
+  // Flight duty period
+  flightDutyStart       DateTime
+  flightDutyEnd         DateTime?
+  flightDutyHours       Float?
+
+  // Rest period
+  lastRestStart         DateTime
+  lastRestEnd           DateTime
+  restHours             Float
+
+  // Limits (FAA Part 117)
+  maxFlightDutyHours    Float                 // Based on start time
+  maxDutyHours          Float                 @default(14)
+  minRestHours          Float                 @default(10)
+
+  // Compliance
+  isCompliant           Boolean               @default(true)
+  violations            Json?
+
+  // Fatigue risk
+  fatigueScore          Float?                // 0-100
+  fatigueRiskLevel      RiskLevel?
+
+  createdAt             DateTime              @default(now())
+  updatedAt             DateTime              @updatedAt
+
+  @@index([crewMemberId])
+  @@index([flightNumber, flightDate])
+  @@index([isCompliant])
+}
+
+model SafetyIncident {
+  id                    String                @id @default(uuid())
+  incidentId            String                @unique
+  incidentType          SafetyIncidentType
+  severity              IncidentSeverity
+
+  // Flight details
+  flightNumber          String?
+  flightDate            DateTime?
+  aircraftRegistration  String?
+  origin                String?
+  destination           String?
+  phase                 FlightPhase?
+
+  // Incident details
+  occurredAt            DateTime
+  location              String?
+  description           String                @db.Text
+
+  // Reporting
+  reportedBy            String
+  reportedAt            DateTime
+  reportMethod          String?
+
+  // Investigation
+  investigationStatus   InvestigationStatus
+  investigator          String?
+  rootCause             String?               @db.Text
+  contributingFactors   Json?
+
+  // Regulatory reporting
+  requiresFaaReport     Boolean               @default(false)
+  faaReported           Boolean               @default(false)
+  faaReportDate         DateTime?
+  faaReference          String?
+
+  requiresEasaReport    Boolean               @default(false)
+  easaReported          Boolean               @default(false)
+
+  // Corrective actions
+  correctiveActions     Json?
+  preventiveMeasures    Json?
+
+  // Status
+  status                IncidentStatus
+  closedAt              DateTime?
+
+  createdAt             DateTime              @default(now())
+  updatedAt             DateTime              @updatedAt
+
+  @@index([incidentId])
+  @@index([incidentType])
+  @@index([severity])
+  @@index([status])
+  @@index([occurredAt])
+}
+
+enum SafetyIncidentType {
+  ACCIDENT
+  SERIOUS_INCIDENT
+  INCIDENT
+  NEAR_MISS
+  GROUND_DAMAGE
+  BIRD_STRIKE
+  RUNWAY_INCURSION
+  AIRSPACE_VIOLATION
+  TURBULENCE_INJURY
+  EVACUATION
+  DIVERSION
+  MEDICAL_EMERGENCY
+  SECURITY_INCIDENT
+  DANGEROUS_GOODS
+  OTHER
+}
+
+enum IncidentSeverity {
+  CRITICAL
+  MAJOR
+  MODERATE
+  MINOR
+  NEGLIGIBLE
+}
+
+enum FlightPhase {
+  TAXI
+  TAKEOFF
+  CLIMB
+  CRUISE
+  DESCENT
+  APPROACH
+  LANDING
+  PARKING
+}
+
+enum InvestigationStatus {
+  REPORTED
+  UNDER_INVESTIGATION
+  ROOT_CAUSE_IDENTIFIED
+  CORRECTIVE_ACTION_PLANNED
+  COMPLETED
+}
+
+enum IncidentStatus {
+  OPEN
+  UNDER_REVIEW
+  RESOLVED
+  CLOSED
+}
+
+// ============================================================================
+// ACCESSIBILITY COMPLIANCE
+// ============================================================================
+
+model AccessibilityRequest {
+  id                    String                @id @default(uuid())
+  pnr                   String
+  passengerName         String
+  flightNumber          String
+  flightDate            DateTime
+
+  // Request type
+  requestType           AccessibilityRequestType
+  serviceCode           String?               // SSR code (WCHR, WCHC, etc.)
+
+  // Details
+  description           String?               @db.Text
+  equipmentNeeded       String[]
+  medicalCondition      String?
+
+  // Wheelchair details
+  wheelchairType        WheelchairType?
+  ownWheelchair         Boolean?
+  wheelchairDimensions  Json?                 // Height, width, weight
+  batteryType           String?               // For powered wheelchairs
+
+  // Service animal
+  isServiceAnimal       Boolean               @default(false)
+  animalType            String?
+  animalDocumentation   Boolean?
+
+  // Communication assistance
+  communicationNeeds    String[]
+  interpreterRequired   Boolean               @default(false)
+
+  // Notification
+  airlineNotified       Boolean               @default(false)
+  notificationDate      DateTime?
+  airportNotified       Boolean               @default(false)
+
+  // Confirmation
+  isConfirmed           Boolean               @default(false)
+  confirmedBy           String?
+  confirmedAt           DateTime?
+
+  // Compliance tracking
+  acaaCompliant         Boolean               @default(true)
+  ec1107Compliant       Boolean               @default(true)
+
+  requestedAt           DateTime              @default(now())
+  requestedBy           String?
+
+  createdAt             DateTime              @default(now())
+  updatedAt             DateTime              @updatedAt
+
+  @@index([pnr])
+  @@index([flightNumber, flightDate])
+  @@index([requestType])
+  @@index([isConfirmed])
+}
+
+enum AccessibilityRequestType {
+  WHEELCHAIR
+  MOBILITY_AID
+  VISUAL_IMPAIRMENT
+  HEARING_IMPAIRMENT
+  COGNITIVE_ASSISTANCE
+  SERVICE_ANIMAL
+  MEDICAL_EQUIPMENT
+  OXYGEN
+  STRETCHER
+  EXTRA_SEAT
+  OTHER
+}
+
+enum WheelchairType {
+  MANUAL
+  POWERED
+  SPORTS
+  PEDIATRIC
+}
+
+// ============================================================================
+// AUDIT & COMPLIANCE REPORTING
+// ============================================================================
+
+model ComplianceAuditLog {
+  id                    String                @id @default(uuid())
+  auditId               String                @unique
+  complianceArea        ComplianceArea
+  eventType             AuditEventType
+
+  // Entity
+  entityType            String
+  entityId              String
+
+  // User/Actor
+  userId                String?
+  userName              String?
+  userRole              String?
+
+  // Action
+  action                String
+  actionDetails         Json?
+
+  // Data
+  beforeState           Json?
+  afterState            Json?
+
+  // Context
+  ipAddress             String?
+  userAgent             String?
+  sessionId             String?
+
+  // Result
+  success               Boolean               @default(true)
+  errorMessage          String?
+
+  // Timestamp
+  timestamp             DateTime              @default(now())
+
+  // Retention (varies by regulation)
+  retentionUntil        DateTime
+
+  createdAt             DateTime              @default(now())
+
+  @@index([auditId])
+  @@index([complianceArea])
+  @@index([entityType, entityId])
+  @@index([userId])
+  @@index([timestamp])
+  @@index([retentionUntil])
+}
+
+enum ComplianceArea {
+  TSA_SECURE_FLIGHT
+  APIS
+  TRAVEL_DOCUMENTS
+  DANGEROUS_GOODS
+  CUSTOMS
+  SANCTIONS_SCREENING
+  DATA_PRIVACY
+  PCI_DSS
+  AML_KYC
+  AVIATION_SAFETY
+  ACCESSIBILITY
+  GENERAL
+}
+
+enum AuditEventType {
+  CREATE
+  READ
+  UPDATE
+  DELETE
+  EXPORT
+  SHARE
+  CONSENT
+  WITHDRAW_CONSENT
+  ACCESS_DENIED
+  AUTHENTICATION
+  AUTHORIZATION
+  CONFIGURATION_CHANGE
+  SYSTEM_EVENT
+}
+
+model ComplianceCertificate {
+  id                    String                @id @default(uuid())
+  certificateId         String                @unique
+  certificateType       CertificateType
+
+  // Issuer
+  issuingAuthority      String
+  auditor               String?
+
+  // Scope
+  scope                 String?               @db.Text
+
+  // Validity
+  issueDate             DateTime
+  validFrom             DateTime
+  validUntil            DateTime
+
+  // Status
+  status                CertificateStatus
+
+  // Renewal
+  renewalRequired       Boolean               @default(true)
+  renewalNoticeDate     DateTime?
+
+  // Documents
+  certificateUrl        String?
+  attestationUrl        String?
+
+  createdAt             DateTime              @default(now())
+  updatedAt             DateTime              @updatedAt
+
+  @@index([certificateId])
+  @@index([certificateType])
+  @@index([status])
+  @@index([validUntil])
+}
+
+enum CertificateType {
+  PCI_DSS
+  ISO_27001
+  SOC2_TYPE2
+  GDPR_COMPLIANCE
+  TSA_CERTIFICATION
+  IATA_CERTIFICATION
+  FAA_PART121
+  EASA_APPROVAL
+  OTHER
+}
+
+enum CertificateStatus {
+  ACTIVE
+  EXPIRED
+  SUSPENDED
+  REVOKED
+  PENDING_RENEWAL
+}
+
+model RegulatoryChange {
+  id                    String                @id @default(uuid())
+  changeId              String                @unique
+  regulationType        ComplianceArea
+
+  // Change details
+  title                 String
+  description           String                @db.Text
+  issuingAuthority      String
+  jurisdiction          String[]
+
+  // Dates
+  publishedDate         DateTime
+  effectiveDate         DateTime
+  implementationDeadline DateTime?
+
+  // Impact
+  impactLevel           ImpactLevel
+  affectedSystems       String[]
+  affectedProcesses     String[]
+
+  // Implementation
+  implementationStatus  ImplementationStatus
+  assignedTo            String?
+  implementationPlan    String?               @db.Text
+  completedDate         DateTime?
+
+  // References
+  regulationReference   String?
+  documentUrl           String?
+
+  createdAt             DateTime              @default(now())
+  updatedAt             DateTime              @updatedAt
+
+  @@index([changeId])
+  @@index([regulationType])
+  @@index([effectiveDate])
+  @@index([implementationStatus])
+}
+
+enum ImpactLevel {
+  CRITICAL
+  HIGH
+  MEDIUM
+  LOW
+}
+
+enum ImplementationStatus {
+  IDENTIFIED
+  UNDER_REVIEW
+  PLANNING
+  IN_PROGRESS
+  TESTING
+  IMPLEMENTED
+  VERIFIED
+}
