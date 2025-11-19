@@ -1,0 +1,48 @@
+# ZAP Scanning Rules Configuration
+# Format: ID	THRESHOLD	[IGNORE	URL-PATTERN]
+
+# Ignore false positives
+10202	IGNORE	(^https?://localhost.*$)
+
+# Set thresholds for specific vulnerabilities
+# 10021 - X-Content-Type-Options header missing
+10021	MEDIUM
+
+# 10096 - Timestamp Disclosure
+10096	LOW
+
+# 10049 - Content Security Policy (CSP) Header Not Set
+10049	MEDIUM
+
+# 10038 - Content Security Policy (CSP) wildcard
+10038	MEDIUM
+
+# 10055 - CSP: script-src unsafe-inline
+10055	HIGH
+
+# 10056 - CSP: script-src unsafe-eval
+10056	HIGH
+
+# SQL Injection
+40018	HIGH
+
+# Cross Site Scripting (XSS)
+40012	HIGH
+40014	HIGH
+40016	HIGH
+40017	HIGH
+
+# Remote Code Execution
+90019	CRITICAL
+
+# Path Traversal
+6	HIGH
+
+# Remote File Inclusion
+7	CRITICAL
+
+# Server Side Include
+40009	HIGH
+
+# Authentication bypass
+10101	CRITICAL

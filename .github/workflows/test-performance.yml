@@ -1,0 +1,120 @@
+name: Performance & Load Testing
+
+on:
+  push:
+    branches: [main]
+  schedule:
+    # Run performance tests nightly at 1 AM UTC
+    - cron: '0 1 * * *'
+  workflow_dispatch:
+    inputs:
+      test-type:
+        description: 'Type of load test to run'
+        required: true
+        type: choice
+        options:
+          - booking-flow
+          - spike-test
+          - stress-test
+          - soak-test
+
+jobs:
+  load-test:
+    name: k6 Load Test
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup k6
+        run: |
+          sudo gpg -k
+          sudo gpg --no-default-keyring --keyring /usr/share/keyrings/k6-archive-keyring.gpg --keyserver hkp://keyserver.ubuntu.com:80 --recv-keys C5AD17C747E3415A3642D57D77C6C491D6AC1D69
+          echo "deb [signed-by=/usr/share/keyrings/k6-archive-keyring.gpg] https://dl.k6.io/deb stable main" | sudo tee /etc/apt/sources.list.d/k6.list
+          sudo apt-get update
+          sudo apt-get install k6
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20.x
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build services
+        run: npm run build
+
+      - name: Start test environment
+        run: |
+          docker-compose -f docker-compose.test.yml up -d
+          sleep 60
+
+      - name: Run booking flow load test
+        if: github.event.inputs.test-type == 'booking-flow' || github.event_name == 'schedule'
+        env:
+          BASE_URL: http://localhost:3000
+        run: k6 run load-tests/scenarios/booking-flow.k6.js --out json=load-test-results.json
+
+      - name: Run spike test
+        if: github.event.inputs.test-type == 'spike-test'
+        env:
+          BASE_URL: http://localhost:3000
+        run: k6 run load-tests/scenarios/spike-test.k6.js --out json=spike-test-results.json
+
+      - name: Run stress test
+        if: github.event.inputs.test-type == 'stress-test'
+        env:
+          BASE_URL: http://localhost:3000
+        run: k6 run load-tests/scenarios/stress-test.k6.js --out json=stress-test-results.json
+
+      - name: Run soak test
+        if: github.event.inputs.test-type == 'soak-test'
+        env:
+          BASE_URL: http://localhost:3000
+        run: k6 run load-tests/scenarios/soak-test.k6.js --out json=soak-test-results.json
+
+      - name: Upload k6 results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: k6-test-results
+          path: '*-test-results.json'
+          retention-days: 30
+
+      - name: Generate performance report
+        if: always()
+        run: |
+          npm run generate:perf-report
+
+      - name: Comment PR with performance results
+        if: github.event_name == 'pull_request' && always()
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            const results = JSON.parse(fs.readFileSync('load-test-results.json', 'utf8'));
+            const comment = `
+            ## 📊 Performance Test Results
+
+            - **Average Response Time**: ${results.metrics.http_req_duration.values.avg.toFixed(2)}ms
+            - **95th Percentile**: ${results.metrics.http_req_duration.values['p(95)'].toFixed(2)}ms
+            - **Error Rate**: ${(results.metrics.http_req_failed.values.rate * 100).toFixed(2)}%
+            - **Total Requests**: ${results.metrics.http_reqs.values.count}
+
+            ${results.metrics.http_req_duration.values['p(95)'] < 2000 ? '✅' : '❌'} 95th percentile under 2s threshold
+            ${results.metrics.http_req_failed.values.rate < 0.01 ? '✅' : '❌'} Error rate under 1%
+            `;
+
+            github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: comment
+            });
+
+      - name: Cleanup
+        if: always()
+        run: docker-compose -f docker-compose.test.yml down

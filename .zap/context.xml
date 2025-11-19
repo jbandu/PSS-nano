@@ -1,0 +1,48 @@
+<?xml version="1.0" encoding="UTF-8" standalone="no"?>
+<configuration>
+  <context>
+    <name>PSS-nano Application</name>
+    <desc>Passenger Service System - Security Testing Context</desc>
+    <inscope>true</inscope>
+    <incregexes>http://localhost:.*</incregexes>
+    <incregexes>https://localhost:.*</incregexes>
+    <tech>
+      <include>Db</include>
+      <include>Db.PostgreSQL</include>
+      <include>Db.Redis</include>
+      <include>Language</include>
+      <include>Language.JavaScript</include>
+      <include>OS</include>
+      <include>OS.Linux</include>
+      <include>SCM</include>
+      <include>WS</include>
+    </tech>
+    <urlparser>
+      <class>org.zaproxy.zap.model.StandardParameterParser</class>
+      <config>{"kvps":"&amp;","kv":"=","struct":[]}</config>
+    </urlparser>
+    <authentication>
+      <type>1</type>
+      <strategy>EACH_RESP</strategy>
+      <pollurl/>
+      <polldata/>
+      <pollheaders/>
+      <pollfreq>60</pollfreq>
+      <pollunits>REQUESTS</pollunits>
+    </authentication>
+    <users/>
+    <forceduser>-1</forceduser>
+    <session>
+      <type>0</type>
+    </session>
+    <authorization>
+      <type>0</type>
+      <basic>
+        <header/>
+        <body/>
+        <logic>AND</logic>
+        <code>-1</code>
+      </basic>
+    </authorization>
+  </context>
+</configuration>
