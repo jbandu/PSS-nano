@@ -1,0 +1,476 @@
+name: Production Deployment
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: 'Environment to deploy to'
+        required: true
+        type: choice
+        options:
+          - staging
+          - production
+      deployment-strategy:
+        description: 'Deployment strategy'
+        required: true
+        type: choice
+        options:
+          - rolling
+          - canary
+          - blue-green
+
+env:
+  NODE_VERSION: '20'
+  GCP_REGION: us-central1
+  REGISTRY: gcr.io/${{ secrets.GCP_PROJECT_ID }}
+
+jobs:
+  build-and-test:
+    name: Build and Test
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Generate version
+        id: version
+        run: |
+          VERSION=$(git describe --tags --always --dirty)
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+          echo "Version: $VERSION"
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run linting
+        run: npm run lint
+
+      - name: Run tests
+        run: |
+          npm run test:unit -- --coverage
+          npm run test:integration
+
+      - name: Upload test coverage
+        uses: codecov/codecov-action@v3
+        with:
+          files: ./coverage/lcov.info
+
+  build-images:
+    name: Build Production Images
+    runs-on: ubuntu-latest
+    needs: [build-and-test]
+    strategy:
+      matrix:
+        service:
+          - api-gateway
+          - auth-service
+          - reservation-service
+          - inventory-service
+          - payment-service
+          - pricing-service
+          - ancillary-service
+          - boarding-service
+          - dcs-service
+          - load-control-service
+          - marketing-service
+          - analytics-service
+          - cms-service
+          - gds-integration-service
+          - regulatory-compliance-service
+          - airport-integration-service
+          - notification-service
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Authenticate to Google Cloud
+        uses: google-github-actions/auth@v2
+        with:
+          credentials_json: ${{ secrets.GCP_SA_KEY }}
+
+      - name: Configure Docker for GCR
+        run: gcloud auth configure-docker
+
+      - name: Extract metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.REGISTRY }}/${{ matrix.service }}
+          tags: |
+            type=raw,value=${{ needs.build-and-test.outputs.version }}
+            type=raw,value=latest
+            type=sha,prefix={{branch}}-
+
+      - name: Build and push Docker image
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: services/${{ matrix.service }}/Dockerfile
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+          build-args: |
+            SERVICE_NAME=${{ matrix.service }}
+          provenance: true
+          sbom: true
+
+      - name: Sign image with cosign
+        run: |
+          echo "${{ secrets.COSIGN_KEY }}" > cosign.key
+          cosign sign --key cosign.key \
+            ${{ env.REGISTRY }}/${{ matrix.service }}:${{ needs.build-and-test.outputs.version }}
+          rm cosign.key
+
+  security-scan:
+    name: Security Scan
+    runs-on: ubuntu-latest
+    needs: [build-images, build-and-test]
+    strategy:
+      matrix:
+        service:
+          - api-gateway
+          - auth-service
+          - reservation-service
+          - inventory-service
+          - payment-service
+          - pricing-service
+    steps:
+      - name: Authenticate to Google Cloud
+        uses: google-github-actions/auth@v2
+        with:
+          credentials_json: ${{ secrets.GCP_SA_KEY }}
+
+      - name: Configure Docker for GCR
+        run: gcloud auth configure-docker
+
+      - name: Run Trivy scanner
+        uses: aquasecurity/trivy-action@master
+        with:
+          image-ref: ${{ env.REGISTRY }}/${{ matrix.service }}:${{ needs.build-and-test.outputs.version }}
+          format: 'sarif'
+          output: 'trivy-results.sarif'
+
+      - name: Upload to Security tab
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: 'trivy-results.sarif'
+
+  deploy-staging:
+    name: Deploy to Staging
+    runs-on: ubuntu-latest
+    needs: [build-images, security-scan, build-and-test]
+    environment:
+      name: staging
+      url: https://staging.pss-nano.com
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Authenticate to Google Cloud
+        uses: google-github-actions/auth@v2
+        with:
+          credentials_json: ${{ secrets.GCP_SA_KEY }}
+
+      - name: Get GKE credentials
+        uses: google-github-actions/get-gke-credentials@v2
+        with:
+          cluster_name: pss-nano-gke-staging
+          location: ${{ env.GCP_REGION }}
+
+      - name: Install Helm
+        uses: azure/setup-helm@v3
+        with:
+          version: '3.13.0'
+
+      - name: Deploy to staging
+        run: |
+          helm upgrade --install \
+            --namespace pss-nano \
+            --create-namespace \
+            --set global.environment=staging \
+            --set global.imageTag=${{ needs.build-and-test.outputs.version }} \
+            --values helm/api-gateway/values-staging.yaml \
+            --wait \
+            --timeout 15m \
+            pss-nano \
+            ./helm/api-gateway
+
+      - name: Wait for rollout
+        run: |
+          kubectl rollout status deployment/api-gateway -n pss-nano --timeout=10m
+
+  e2e-tests-staging:
+    name: E2E Tests - Staging
+    runs-on: ubuntu-latest
+    needs: [deploy-staging]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run E2E tests
+        run: npm run test:e2e
+        env:
+          E2E_BASE_URL: https://staging.pss-nano.com
+          E2E_TIMEOUT: 60000
+
+      - name: Run smoke tests
+        run: npm run test:smoke
+        env:
+          BASE_URL: https://staging.pss-nano.com
+
+      - name: Upload test results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: e2e-staging-results
+          path: test-results/
+
+  deploy-production-approval:
+    name: Production Deployment Approval
+    runs-on: ubuntu-latest
+    needs: [e2e-tests-staging, build-and-test]
+    environment:
+      name: production-approval
+    steps:
+      - name: Approval checkpoint
+        run: |
+          echo "Production deployment approved for version ${{ needs.build-and-test.outputs.version }}"
+
+  deploy-production-canary:
+    name: Deploy to Production (Canary)
+    runs-on: ubuntu-latest
+    needs: [deploy-production-approval, build-and-test]
+    environment:
+      name: production
+      url: https://pss-nano.com
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Authenticate to Google Cloud
+        uses: google-github-actions/auth@v2
+        with:
+          credentials_json: ${{ secrets.GCP_SA_KEY }}
+
+      - name: Get GKE credentials
+        uses: google-github-actions/get-gke-credentials@v2
+        with:
+          cluster_name: pss-nano-gke-prod
+          location: ${{ env.GCP_REGION }}
+
+      - name: Install Helm
+        uses: azure/setup-helm@v3
+        with:
+          version: '3.13.0'
+
+      - name: Deploy canary (10%)
+        run: |
+          # Deploy canary version
+          helm upgrade --install \
+            --namespace pss-nano \
+            --create-namespace \
+            --set global.environment=production \
+            --set global.imageTag=${{ needs.build-and-test.outputs.version }} \
+            --set canary.enabled=true \
+            --set canary.weight=10 \
+            --values helm/api-gateway/values-prod.yaml \
+            --wait \
+            --timeout 15m \
+            pss-nano-canary \
+            ./helm/api-gateway
+
+      - name: Wait for canary rollout
+        run: |
+          kubectl rollout status deployment/api-gateway-canary -n pss-nano --timeout=10m
+
+  smoke-tests-canary:
+    name: Smoke Tests - Canary
+    runs-on: ubuntu-latest
+    needs: [deploy-production-canary]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run smoke tests against canary
+        run: npm run test:smoke
+        env:
+          BASE_URL: https://pss-nano.com
+          CANARY_HEADER: 'x-version: canary'
+
+      - name: Check canary metrics
+        run: |
+          # Query Prometheus for canary metrics
+          echo "Checking canary error rate..."
+          # Add actual Prometheus queries here
+
+  deploy-production-full:
+    name: Full Production Rollout
+    runs-on: ubuntu-latest
+    needs: [smoke-tests-canary, build-and-test]
+    environment:
+      name: production
+      url: https://pss-nano.com
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Authenticate to Google Cloud
+        uses: google-github-actions/auth@v2
+        with:
+          credentials_json: ${{ secrets.GCP_SA_KEY }}
+
+      - name: Get GKE credentials
+        uses: google-github-actions/get-gke-credentials@v2
+        with:
+          cluster_name: pss-nano-gke-prod
+          location: ${{ env.GCP_REGION }}
+
+      - name: Install Helm
+        uses: azure/setup-helm@v3
+        with:
+          version: '3.13.0'
+
+      - name: Gradual rollout to 50%
+        run: |
+          helm upgrade --install \
+            --namespace pss-nano \
+            --set canary.weight=50 \
+            --reuse-values \
+            --wait \
+            pss-nano-canary \
+            ./helm/api-gateway
+
+      - name: Wait and monitor
+        run: sleep 300  # Wait 5 minutes
+
+      - name: Full rollout (100%)
+        run: |
+          helm upgrade --install \
+            --namespace pss-nano \
+            --create-namespace \
+            --set global.environment=production \
+            --set global.imageTag=${{ needs.build-and-test.outputs.version }} \
+            --values helm/api-gateway/values-prod.yaml \
+            --wait \
+            --timeout 15m \
+            pss-nano \
+            ./helm/api-gateway
+
+      - name: Remove canary
+        run: |
+          helm uninstall pss-nano-canary --namespace pss-nano || true
+
+      - name: Verify production deployment
+        run: |
+          kubectl rollout status deployment/api-gateway -n pss-nano --timeout=10m
+
+  post-deployment:
+    name: Post Deployment Tasks
+    runs-on: ubuntu-latest
+    needs: [deploy-production-full, build-and-test]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Create GitHub release
+        uses: actions/create-release@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          tag_name: ${{ needs.build-and-test.outputs.version }}
+          release_name: Release ${{ needs.build-and-test.outputs.version }}
+          draft: false
+          prerelease: false
+
+      - name: Notify Slack
+        uses: slackapi/slack-github-action@v1
+        with:
+          webhook-url: ${{ secrets.SLACK_WEBHOOK_URL }}
+          webhook-type: incoming-webhook
+          payload: |
+            {
+              "text": "🚀 Production deployment completed!",
+              "blocks": [
+                {
+                  "type": "section",
+                  "text": {
+                    "type": "mrkdwn",
+                    "text": "*Production Deployment Successful*\n\nVersion: `${{ needs.build-and-test.outputs.version }}`\nCommit: `${{ github.sha }}`\nAuthor: ${{ github.actor }}"
+                  }
+                }
+              ]
+            }
+
+      - name: Update deployment tracking
+        run: |
+          echo "Deployment completed at $(date)"
+          echo "Version: ${{ needs.build-and-test.outputs.version }}"
+
+  rollback:
+    name: Rollback on Failure
+    runs-on: ubuntu-latest
+    needs: [deploy-production-full]
+    if: failure()
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Authenticate to Google Cloud
+        uses: google-github-actions/auth@v2
+        with:
+          credentials_json: ${{ secrets.GCP_SA_KEY }}
+
+      - name: Get GKE credentials
+        uses: google-github-actions/get-gke-credentials@v2
+        with:
+          cluster_name: pss-nano-gke-prod
+          location: ${{ env.GCP_REGION }}
+
+      - name: Rollback deployment
+        run: |
+          helm rollback pss-nano --namespace pss-nano
+
+      - name: Notify failure
+        uses: slackapi/slack-github-action@v1
+        with:
+          webhook-url: ${{ secrets.SLACK_WEBHOOK_URL }}
+          webhook-type: incoming-webhook
+          payload: |
+            {
+              "text": "❌ Production deployment failed and was rolled back!",
+              "blocks": [
+                {
+                  "type": "section",
+                  "text": {
+                    "type": "mrkdwn",
+                    "text": "*Production Deployment Failed*\n\nThe deployment has been automatically rolled back.\nPlease check the logs for details."
+                  }
+                }
+              ]
+            }

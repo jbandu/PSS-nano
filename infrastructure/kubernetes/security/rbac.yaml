@@ -1,0 +1,145 @@
+# RBAC Configuration for PSS-nano
+---
+# Namespace for dev team
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: pss-nano
+  labels:
+    name: pss-nano
+    environment: production
+---
+# Developer role - read access to most resources
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: developer
+  namespace: pss-nano
+rules:
+  - apiGroups: [""]
+    resources: ["pods", "pods/log", "services", "configmaps"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: ["apps"]
+    resources: ["deployments", "replicasets", "statefulsets"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: ["batch"]
+    resources: ["jobs", "cronjobs"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: [""]
+    resources: ["pods/exec"]
+    verbs: ["create"]
+---
+# DevOps role - full access except secrets
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: devops
+  namespace: pss-nano
+rules:
+  - apiGroups: ["", "apps", "batch", "extensions", "networking.k8s.io"]
+    resources: ["*"]
+    verbs: ["*"]
+  - apiGroups: [""]
+    resources: ["secrets"]
+    verbs: ["get", "list"]
+---
+# Admin role - full access
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: admin
+  namespace: pss-nano
+rules:
+  - apiGroups: ["*"]
+    resources: ["*"]
+    verbs: ["*"]
+---
+# CI/CD service account
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: cicd
+  namespace: pss-nano
+---
+# CI/CD role - deployment and image management
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: cicd
+  namespace: pss-nano
+rules:
+  - apiGroups: ["apps"]
+    resources: ["deployments", "replicasets"]
+    verbs: ["get", "list", "create", "update", "patch", "delete"]
+  - apiGroups: [""]
+    resources: ["pods", "services", "configmaps"]
+    verbs: ["get", "list", "create", "update", "patch"]
+  - apiGroups: ["batch"]
+    resources: ["jobs"]
+    verbs: ["get", "list", "create", "delete"]
+  - apiGroups: [""]
+    resources: ["secrets"]
+    verbs: ["get"]
+---
+# Role bindings
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: cicd-binding
+  namespace: pss-nano
+subjects:
+  - kind: ServiceAccount
+    name: cicd
+    namespace: pss-nano
+roleRef:
+  kind: Role
+  name: cicd
+  apiGroup: rbac.authorization.k8s.io
+---
+# Cluster role for reading cluster-wide resources
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: pss-nano-viewer
+rules:
+  - apiGroups: [""]
+    resources: ["namespaces", "nodes"]
+    verbs: ["get", "list"]
+  - apiGroups: ["metrics.k8s.io"]
+    resources: ["nodes", "pods"]
+    verbs: ["get", "list"]
+---
+# Service account for monitoring
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: monitoring
+  namespace: monitoring
+---
+# Cluster role for Prometheus
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: prometheus
+rules:
+  - apiGroups: [""]
+    resources: ["nodes", "nodes/metrics", "services", "endpoints", "pods"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: [""]
+    resources: ["configmaps"]
+    verbs: ["get"]
+  - nonResourceURLs: ["/metrics", "/metrics/cadvisor"]
+    verbs: ["get"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: prometheus
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: prometheus
+subjects:
+  - kind: ServiceAccount
+    name: monitoring
+    namespace: monitoring

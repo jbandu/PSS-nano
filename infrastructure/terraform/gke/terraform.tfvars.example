@@ -1,0 +1,54 @@
+# GCP Project Configuration
+project_id   = "your-gcp-project-id"
+project_name = "pss-nano"
+region       = "us-central1"
+zones        = ["us-central1-a", "us-central1-b", "us-central1-c"]
+environment  = "dev"
+
+# Network Configuration
+subnet_cidr   = "10.0.0.0/20"
+pods_cidr     = "10.4.0.0/14"
+services_cidr = "10.8.0.0/20"
+master_cidr   = "172.16.0.0/28"
+
+# Master Authorized Networks (restrict in production)
+master_authorized_networks = [
+  {
+    cidr_block   = "0.0.0.0/0"
+    display_name = "All"
+  }
+]
+
+# GKE Configuration
+release_channel  = "REGULAR"
+enable_autopilot = false
+
+# API Node Pool
+api_node_count  = 3
+api_min_nodes   = 3
+api_max_nodes   = 10
+api_machine_type = "n2-standard-2"
+
+# Worker Node Pool
+worker_node_count  = 2
+worker_min_nodes   = 2
+worker_max_nodes   = 10
+worker_machine_type = "n2-standard-2"
+
+# Cache Node Pool
+cache_node_count  = 3
+cache_min_nodes   = 3
+cache_max_nodes   = 6
+cache_machine_type = "n2-highmem-2"
+
+# Cloud SQL Configuration
+db_tier      = "db-custom-2-7680"
+db_disk_size = 100
+db_username  = "airlineops"
+# db_password should be set via environment variable or secret manager
+
+# Replica Configuration (for production)
+replica_region = "us-east1"
+
+# Security
+blocked_ip_ranges = []

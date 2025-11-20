@@ -1,0 +1,58 @@
+# Multi-stage Dockerfile using Distroless for maximum security
+# Stage 1: Build environment
+FROM node:20-alpine AS builder
+
+WORKDIR /app
+
+# Copy package files
+COPY package*.json ./
+COPY tsconfig*.json ./
+COPY turbo.json ./
+
+# Install dependencies
+RUN --mount=type=cache,target=/root/.npm \
+    npm ci --ignore-scripts
+
+# Copy source code
+COPY . .
+
+# Build the application
+ARG SERVICE_NAME
+RUN npm run build --workspace=services/${SERVICE_NAME}
+
+# Stage 2: Production dependencies
+FROM node:20-alpine AS prod-deps
+
+WORKDIR /app
+
+COPY package*.json ./
+
+RUN --mount=type=cache,target=/root/.npm \
+    npm ci --only=production --ignore-scripts
+
+# Stage 3: Distroless production image
+FROM gcr.io/distroless/nodejs20-debian12:nonroot
+
+WORKDIR /app
+
+# Copy production dependencies
+COPY --from=prod-deps --chown=nonroot:nonroot /app/node_modules ./node_modules
+
+# Copy built application
+ARG SERVICE_NAME
+COPY --from=builder --chown=nonroot:nonroot /app/services/${SERVICE_NAME}/dist ./dist
+COPY --from=builder --chown=nonroot:nonroot /app/services/${SERVICE_NAME}/package.json ./package.json
+
+# Already running as non-root user in distroless
+
+# Start the application
+CMD ["dist/index.js"]
+
+# Expose port
+EXPOSE 3000
+
+# Labels
+LABEL maintainer="PSS-nano Team"
+LABEL org.opencontainers.image.source="https://github.com/pss-nano/pss-nano"
+LABEL org.opencontainers.image.description="PSS-nano Microservice (Distroless)"
+LABEL org.opencontainers.image.licenses="MIT"

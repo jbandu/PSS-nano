@@ -1,0 +1,74 @@
+# Multi-stage Dockerfile for Node.js microservices
+# Stage 1: Base image with security updates
+FROM node:20-alpine AS base
+
+# Install security updates
+RUN apk update && \
+    apk upgrade && \
+    apk add --no-cache \
+    dumb-init \
+    tini && \
+    rm -rf /var/cache/apk/*
+
+# Create app user
+RUN addgroup -g 1000 node && \
+    adduser -u 1000 -G node -s /bin/sh -D node
+
+WORKDIR /app
+
+# Stage 2: Dependencies
+FROM base AS dependencies
+
+# Copy package files
+COPY package*.json ./
+COPY tsconfig*.json ./
+COPY turbo.json ./
+
+# Install dependencies with caching
+RUN --mount=type=cache,target=/root/.npm \
+    npm ci --only=production --ignore-scripts && \
+    cp -R node_modules /tmp/node_modules && \
+    npm ci --ignore-scripts
+
+# Stage 3: Build
+FROM dependencies AS build
+
+# Copy source code
+COPY . .
+
+# Build the application
+ARG SERVICE_NAME
+RUN npm run build --workspace=services/${SERVICE_NAME}
+
+# Stage 4: Production
+FROM base AS production
+
+# Copy production dependencies
+COPY --from=dependencies /tmp/node_modules ./node_modules
+
+# Copy built application
+ARG SERVICE_NAME
+COPY --from=build /app/services/${SERVICE_NAME}/dist ./dist
+COPY --from=build /app/services/${SERVICE_NAME}/package.json ./package.json
+
+# Security: Use non-root user
+USER node
+
+# Health check
+HEALTHCHECK --interval=30s --timeout=3s --start-period=40s --retries=3 \
+    CMD node -e "require('http').get('http://localhost:3000/health', (r) => {process.exit(r.statusCode === 200 ? 0 : 1)})"
+
+# Use tini as init system
+ENTRYPOINT ["/sbin/tini", "--"]
+
+# Start the application
+CMD ["node", "dist/index.js"]
+
+# Expose port
+EXPOSE 3000
+
+# Labels
+LABEL maintainer="PSS-nano Team"
+LABEL org.opencontainers.image.source="https://github.com/pss-nano/pss-nano"
+LABEL org.opencontainers.image.description="PSS-nano Microservice"
+LABEL org.opencontainers.image.licenses="MIT"

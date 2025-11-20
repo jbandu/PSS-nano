@@ -1,0 +1,79 @@
+# Velero backup configuration
+configuration:
+  provider: gcp
+
+  backupStorageLocation:
+    bucket: pss-nano-velero-backups
+    config:
+      project: pss-nano-project
+
+  volumeSnapshotLocation:
+    config:
+      project: pss-nano-project
+      snapshotLocation: us-central1
+
+  # Backup retention
+  defaultBackupTTL: 720h  # 30 days
+
+  # Backup schedule
+  schedules:
+    daily:
+      schedule: "0 2 * * *"  # 2 AM daily
+      template:
+        ttl: 720h
+        includedNamespaces:
+          - pss-nano
+          - monitoring
+        excludedResources:
+          - events
+          - events.events.k8s.io
+
+    weekly:
+      schedule: "0 3 * * 0"  # 3 AM Sunday
+      template:
+        ttl: 2160h  # 90 days
+        includedNamespaces:
+          - pss-nano
+          - monitoring
+
+credentials:
+  useSecret: true
+  secretContents:
+    cloud: |
+      {
+        "type": "service_account",
+        "project_id": "pss-nano-project"
+      }
+
+resources:
+  requests:
+    cpu: 250m
+    memory: 256Mi
+  limits:
+    cpu: 1000m
+    memory: 1Gi
+
+# Metrics
+metrics:
+  enabled: true
+  serviceMonitor:
+    enabled: true
+
+# Node agent (for file-level backup)
+deployNodeAgent: true
+
+nodeAgent:
+  resources:
+    requests:
+      cpu: 250m
+      memory: 512Mi
+    limits:
+      cpu: 1000m
+      memory: 2Gi
+
+initContainers:
+  - name: velero-plugin-for-gcp
+    image: velero/velero-plugin-for-gcp:v1.8.0
+    volumeMounts:
+      - mountPath: /target
+        name: plugins

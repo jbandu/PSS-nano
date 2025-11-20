@@ -1,0 +1,68 @@
+# Redis Cluster Configuration
+architecture: replication
+auth:
+  enabled: true
+  existingSecret: pss-nano-redis-secret
+  existingSecretPasswordKey: password
+
+master:
+  count: 3
+  persistence:
+    enabled: true
+    size: 8Gi
+    storageClass: "standard-rwo"
+  resources:
+    limits:
+      cpu: 500m
+      memory: 4Gi
+    requests:
+      cpu: 250m
+      memory: 2Gi
+  nodeSelector:
+    workload: cache
+  tolerations:
+    - key: "workload"
+      operator: "Equal"
+      value: "cache"
+      effect: "NoSchedule"
+
+replica:
+  replicaCount: 3
+  persistence:
+    enabled: true
+    size: 8Gi
+    storageClass: "standard-rwo"
+  resources:
+    limits:
+      cpu: 500m
+      memory: 4Gi
+    requests:
+      cpu: 250m
+      memory: 2Gi
+  nodeSelector:
+    workload: cache
+  tolerations:
+    - key: "workload"
+      operator: "Equal"
+      value: "cache"
+      effect: "NoSchedule"
+
+sentinel:
+  enabled: true
+  quorum: 2
+
+metrics:
+  enabled: true
+  serviceMonitor:
+    enabled: true
+    interval: 30s
+
+networkPolicy:
+  enabled: true
+  allowExternal: false
+
+podSecurityPolicy:
+  create: true
+
+rbac:
+  create: true

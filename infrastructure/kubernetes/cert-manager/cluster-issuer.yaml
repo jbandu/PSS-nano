@@ -1,0 +1,95 @@
+# Let's Encrypt Production Issuer
+apiVersion: cert-manager.io/v1
+kind: ClusterIssuer
+metadata:
+  name: letsencrypt-prod
+spec:
+  acme:
+    # Production ACME server
+    server: https://acme-v02.api.letsencrypt.org/directory
+    email: admin@pss-nano.com
+    privateKeySecretRef:
+      name: letsencrypt-prod-account-key
+    solvers:
+      # HTTP-01 challenge
+      - http01:
+          ingress:
+            class: nginx
+      # DNS-01 challenge for wildcard certificates
+      - dns01:
+          cloudDNS:
+            project: pss-nano-project
+            serviceAccountSecretRef:
+              name: clouddns-dns01-solver-sa
+              key: key.json
+        selector:
+          dnsZones:
+            - "pss-nano.com"
+---
+# Let's Encrypt Staging Issuer (for testing)
+apiVersion: cert-manager.io/v1
+kind: ClusterIssuer
+metadata:
+  name: letsencrypt-staging
+spec:
+  acme:
+    server: https://acme-staging-v02.api.letsencrypt.org/directory
+    email: admin@pss-nano.com
+    privateKeySecretRef:
+      name: letsencrypt-staging-account-key
+    solvers:
+      - http01:
+          ingress:
+            class: nginx
+      - dns01:
+          cloudDNS:
+            project: pss-nano-project
+            serviceAccountSecretRef:
+              name: clouddns-dns01-solver-sa
+              key: key.json
+        selector:
+          dnsZones:
+            - "pss-nano.com"
+---
+# Self-signed issuer for development
+apiVersion: cert-manager.io/v1
+kind: ClusterIssuer
+metadata:
+  name: selfsigned-issuer
+spec:
+  selfSigned: {}
+---
+# Certificate for API Gateway
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: api-pss-nano-tls
+  namespace: pss-nano
+spec:
+  secretName: api-gateway-tls
+  issuerRef:
+    name: letsencrypt-prod
+    kind: ClusterIssuer
+  dnsNames:
+    - api.pss-nano.com
+    - api-staging.pss-nano.com
+    - api-dev.pss-nano.com
+  duration: 2160h # 90 days
+  renewBefore: 720h # 30 days
+---
+# Wildcard certificate
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: wildcard-pss-nano-tls
+  namespace: pss-nano
+spec:
+  secretName: wildcard-pss-nano-tls
+  issuerRef:
+    name: letsencrypt-prod
+    kind: ClusterIssuer
+  dnsNames:
+    - "*.pss-nano.com"
+    - pss-nano.com
+  duration: 2160h
+  renewBefore: 720h

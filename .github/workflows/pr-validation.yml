@@ -1,0 +1,352 @@
+name: Pull Request Validation
+
+on:
+  pull_request:
+    branches: [main, develop]
+    types: [opened, synchronize, reopened]
+
+env:
+  NODE_VERSION: '20'
+  GCP_REGION: us-central1
+  GKE_CLUSTER: pss-nano-gke-dev
+  REGISTRY: gcr.io/${{ secrets.GCP_PROJECT_ID }}
+
+jobs:
+  detect-changes:
+    name: Detect Changed Services
+    runs-on: ubuntu-latest
+    outputs:
+      services: ${{ steps.detect.outputs.services }}
+      has-changes: ${{ steps.detect.outputs.has-changes }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Detect changed services
+        id: detect
+        run: |
+          # Get changed files
+          CHANGED_FILES=$(git diff --name-only origin/main...HEAD)
+
+          # Detect which services changed
+          SERVICES=$(echo "$CHANGED_FILES" | grep -oP 'services/\K[^/]+' | sort -u | jq -R -s -c 'split("\n")[:-1]')
+
+          echo "services=$SERVICES" >> $GITHUB_OUTPUT
+
+          if [ "$SERVICES" != "[]" ]; then
+            echo "has-changes=true" >> $GITHUB_OUTPUT
+          else
+            echo "has-changes=false" >> $GITHUB_OUTPUT
+          fi
+
+  lint:
+    name: Lint Code
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run ESLint
+        run: npm run lint
+
+      - name: Run Prettier
+        run: npm run format:check
+
+      - name: TypeScript check
+        run: npm run type-check
+
+  unit-tests:
+    name: Unit Tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run unit tests
+        run: npm run test:unit -- --coverage
+
+      - name: Upload coverage to Codecov
+        uses: codecov/codecov-action@v3
+        with:
+          files: ./coverage/lcov.info
+          flags: unittests
+          name: codecov-umbrella
+
+  integration-tests:
+    name: Integration Tests
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: airlineops
+          POSTGRES_PASSWORD: testpass
+          POSTGRES_DB: airline_ops_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+      rabbitmq:
+        image: rabbitmq:3.12-alpine
+        ports:
+          - 5672:5672
+        options: >-
+          --health-cmd "rabbitmq-diagnostics ping"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run database migrations
+        run: npm run db:migrate
+        env:
+          DATABASE_URL: postgresql://airlineops:testpass@localhost:5432/airline_ops_test
+
+      - name: Run integration tests
+        run: npm run test:integration
+        env:
+          DATABASE_URL: postgresql://airlineops:testpass@localhost:5432/airline_ops_test
+          REDIS_URL: redis://localhost:6379
+          RABBITMQ_URL: amqp://localhost:5672
+
+  build-images:
+    name: Build Docker Images
+    runs-on: ubuntu-latest
+    needs: [detect-changes, lint, unit-tests, integration-tests]
+    if: needs.detect-changes.outputs.has-changes == 'true'
+    strategy:
+      matrix:
+        service: ${{ fromJson(needs.detect-changes.outputs.services) }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Authenticate to Google Cloud
+        uses: google-github-actions/auth@v2
+        with:
+          credentials_json: ${{ secrets.GCP_SA_KEY }}
+
+      - name: Configure Docker for GCR
+        run: gcloud auth configure-docker
+
+      - name: Extract metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.REGISTRY }}/${{ matrix.service }}
+          tags: |
+            type=ref,event=pr
+            type=sha,prefix=pr-{{branch}}-
+
+      - name: Build and push Docker image
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: services/${{ matrix.service }}/Dockerfile
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+          build-args: |
+            SERVICE_NAME=${{ matrix.service }}
+
+  security-scan:
+    name: Security Scanning
+    runs-on: ubuntu-latest
+    needs: [build-images]
+    strategy:
+      matrix:
+        service: ${{ fromJson(needs.detect-changes.outputs.services) }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Authenticate to Google Cloud
+        uses: google-github-actions/auth@v2
+        with:
+          credentials_json: ${{ secrets.GCP_SA_KEY }}
+
+      - name: Configure Docker for GCR
+        run: gcloud auth configure-docker
+
+      - name: Run Trivy vulnerability scanner
+        uses: aquasecurity/trivy-action@master
+        with:
+          image-ref: ${{ env.REGISTRY }}/${{ matrix.service }}:pr-${{ github.head_ref }}-${{ github.sha }}
+          format: 'sarif'
+          output: 'trivy-results-${{ matrix.service }}.sarif'
+          severity: 'CRITICAL,HIGH'
+
+      - name: Upload Trivy results to GitHub Security
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: 'trivy-results-${{ matrix.service }}.sarif'
+
+      - name: Fail on critical vulnerabilities
+        uses: aquasecurity/trivy-action@master
+        with:
+          image-ref: ${{ env.REGISTRY }}/${{ matrix.service }}:pr-${{ github.head_ref }}-${{ github.sha }}
+          format: 'table'
+          exit-code: '1'
+          severity: 'CRITICAL'
+
+  deploy-preview:
+    name: Deploy Preview Environment
+    runs-on: ubuntu-latest
+    needs: [detect-changes, security-scan]
+    if: needs.detect-changes.outputs.has-changes == 'true'
+    environment:
+      name: preview-pr-${{ github.event.pull_request.number }}
+      url: https://pr-${{ github.event.pull_request.number }}.preview.pss-nano.com
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Authenticate to Google Cloud
+        uses: google-github-actions/auth@v2
+        with:
+          credentials_json: ${{ secrets.GCP_SA_KEY }}
+
+      - name: Get GKE credentials
+        uses: google-github-actions/get-gke-credentials@v2
+        with:
+          cluster_name: ${{ env.GKE_CLUSTER }}
+          location: ${{ env.GCP_REGION }}
+
+      - name: Install Helm
+        uses: azure/setup-helm@v3
+        with:
+          version: '3.13.0'
+
+      - name: Create preview namespace
+        run: |
+          kubectl create namespace preview-pr-${{ github.event.pull_request.number }} --dry-run=client -o yaml | kubectl apply -f -
+
+      - name: Deploy services to preview
+        run: |
+          helm upgrade --install \
+            --namespace preview-pr-${{ github.event.pull_request.number }} \
+            --create-namespace \
+            --set global.environment=preview \
+            --set global.imageTag=pr-${{ github.head_ref }}-${{ github.sha }} \
+            --wait \
+            --timeout 10m \
+            pss-nano-pr-${{ github.event.pull_request.number }} \
+            ./helm/api-gateway
+
+      - name: Comment PR with preview URL
+        uses: actions/github-script@v7
+        with:
+          script: |
+            github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: '🚀 Preview environment deployed!\n\n' +
+                    '**URL:** https://pr-${{ github.event.pull_request.number }}.preview.pss-nano.com\n' +
+                    '**Namespace:** `preview-pr-${{ github.event.pull_request.number }}`\n\n' +
+                    'This environment will be automatically cleaned up when the PR is closed.'
+            })
+
+  e2e-tests:
+    name: E2E Tests
+    runs-on: ubuntu-latest
+    needs: [deploy-preview]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run E2E tests
+        run: npm run test:e2e
+        env:
+          E2E_BASE_URL: https://pr-${{ github.event.pull_request.number }}.preview.pss-nano.com
+
+      - name: Upload test results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: e2e-results
+          path: test-results/
+
+  pr-summary:
+    name: PR Summary
+    runs-on: ubuntu-latest
+    needs: [lint, unit-tests, integration-tests, build-images, security-scan, e2e-tests]
+    if: always()
+    steps:
+      - name: Generate summary
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const results = {
+              lint: '${{ needs.lint.result }}',
+              unit_tests: '${{ needs.unit-tests.result }}',
+              integration_tests: '${{ needs.integration-tests.result }}',
+              build_images: '${{ needs.build-images.result }}',
+              security_scan: '${{ needs.security-scan.result }}',
+              e2e_tests: '${{ needs.e2e-tests.result }}'
+            };
+
+            let summary = '## Pull Request Validation Results\n\n';
+            for (const [name, result] of Object.entries(results)) {
+              const icon = result === 'success' ? '✅' : result === 'failure' ? '❌' : '⏭️';
+              summary += `${icon} **${name.replace(/_/g, ' ')}**: ${result}\n`;
+            }
+
+            github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: summary
+            });

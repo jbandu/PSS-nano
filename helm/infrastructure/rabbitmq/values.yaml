@@ -1,0 +1,93 @@
+# RabbitMQ Cluster Configuration
+replicaCount: 3
+
+auth:
+  username: airlineops
+  existingPasswordSecret: pss-nano-rabbitmq-secret
+  existingSecretPasswordKey: password
+  existingErlangSecret: pss-nano-rabbitmq-secret
+  existingErlangSecretKey: erlang-cookie
+
+clustering:
+  enabled: true
+  addressType: hostname
+  rebalance: true
+
+persistence:
+  enabled: true
+  size: 8Gi
+  storageClass: "standard-rwo"
+
+resources:
+  limits:
+    cpu: 1000m
+    memory: 2Gi
+  requests:
+    cpu: 500m
+    memory: 1Gi
+
+podManagementPolicy: OrderedReady
+
+service:
+  type: ClusterIP
+  ports:
+    amqp: 5672
+    amqpTls: 5671
+    dist: 25672
+    manager: 15672
+    metrics: 9419
+
+metrics:
+  enabled: true
+  serviceMonitor:
+    enabled: true
+    interval: 30s
+
+networkPolicy:
+  enabled: true
+  allowExternal: false
+
+podDisruptionBudget:
+  create: true
+  minAvailable: 2
+
+rbac:
+  create: true
+
+memoryHighWatermark:
+  enabled: true
+  type: relative
+  value: 0.6
+
+plugins: "rabbitmq_management rabbitmq_prometheus rabbitmq_shovel rabbitmq_shovel_management"
+
+extraConfiguration: |-
+  # Queue master locator
+  queue_master_locator = min-masters
+  # Enable lazy queues by default
+  queue_lazy_mode = default
+  # Total memory available to RabbitMQ
+  vm_memory_high_watermark.relative = 0.6
+  # Disk free space limit
+  disk_free_limit.absolute = 2GB
+
+extraEnvVars:
+  - name: RABBITMQ_SERVER_ADDITIONAL_ERL_ARGS
+    value: "+sbwt none +sbwtdcpu none +sbwtdio none"
+
+nodeSelector:
+  workload: worker
+
+tolerations:
+  - key: "workload"
+    operator: "Equal"
+    value: "worker"
+    effect: "NoSchedule"
+
+affinity:
+  podAntiAffinity:
+    requiredDuringSchedulingIgnoredDuringExecution:
+      - labelSelector:
+          matchLabels:
+            app.kubernetes.io/name: rabbitmq
+        topologyKey: kubernetes.io/hostname

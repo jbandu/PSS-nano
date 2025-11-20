@@ -1,0 +1,27 @@
+master:
+  count: 3
+  persistence:
+    size: 16Gi
+  resources:
+    limits:
+      cpu: 1000m
+      memory: 8Gi
+    requests:
+      cpu: 500m
+      memory: 4Gi
+
+replica:
+  replicaCount: 3
+  persistence:
+    size: 16Gi
+  resources:
+    limits:
+      cpu: 1000m
+      memory: 8Gi
+    requests:
+      cpu: 500m
+      memory: 4Gi
+
+sentinel:
+  enabled: true
+  quorum: 2

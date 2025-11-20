@@ -1,0 +1,99 @@
+# ArgoCD Application for PSS-nano
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: pss-nano-production
+  namespace: argocd
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: default
+
+  source:
+    repoURL: https://github.com/pss-nano/pss-nano.git
+    targetRevision: main
+    path: helm/api-gateway
+    helm:
+      valueFiles:
+        - values-prod.yaml
+
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: pss-nano
+
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+      allowEmpty: false
+    syncOptions:
+      - CreateNamespace=true
+      - PrunePropagationPolicy=foreground
+      - PruneLast=true
+    retry:
+      limit: 5
+      backoff:
+        duration: 5s
+        factor: 2
+        maxDuration: 3m
+
+  # Health check
+  ignoreDifferences:
+    - group: apps
+      kind: Deployment
+      jsonPointers:
+        - /spec/replicas
+
+  # Notification annotations
+  info:
+    - name: URL
+      value: https://api.pss-nano.com
+    - name: Environment
+      value: production
+---
+apiVersion: argoproj.io/v1alpha1
+kind: AppProject
+metadata:
+  name: pss-nano
+  namespace: argocd
+spec:
+  description: PSS-nano Platform
+
+  sourceRepos:
+    - 'https://github.com/pss-nano/pss-nano.git'
+    - 'https://charts.bitnami.com/bitnami'
+
+  destinations:
+    - namespace: 'pss-nano'
+      server: https://kubernetes.default.svc
+    - namespace: 'monitoring'
+      server: https://kubernetes.default.svc
+    - namespace: 'istio-system'
+      server: https://kubernetes.default.svc
+
+  clusterResourceWhitelist:
+    - group: '*'
+      kind: '*'
+
+  namespaceResourceBlacklist:
+    - group: ''
+      kind: ResourceQuota
+    - group: ''
+      kind: LimitRange
+    - group: ''
+      kind: NetworkPolicy
+
+  roles:
+    - name: read-only
+      description: Read-only access
+      policies:
+        - p, proj:pss-nano:read-only, applications, get, pss-nano/*, allow
+      groups:
+        - viewers
+
+    - name: ci-role
+      description: CI/CD pipeline role
+      policies:
+        - p, proj:pss-nano:ci-role, applications, sync, pss-nano/*, allow
+      groups:
+        - ci-cd

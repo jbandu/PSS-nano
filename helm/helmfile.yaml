@@ -1,0 +1,215 @@
+helmDefaults:
+  atomic: true
+  cleanupOnFail: true
+  wait: true
+  timeout: 600
+  recreatePods: false
+  force: false
+
+repositories:
+  - name: bitnami
+    url: https://charts.bitnami.com/bitnami
+  - name: prometheus-community
+    url: https://prometheus-community.github.io/helm-charts
+  - name: grafana
+    url: https://grafana.github.io/helm-charts
+  - name: jetstack
+    url: https://charts.jetstack.io
+  - name: ingress-nginx
+    url: https://kubernetes.github.io/ingress-nginx
+  - name: istio
+    url: https://istio-release.storage.googleapis.com/charts
+  - name: argo
+    url: https://argoproj.github.io/argo-helm
+
+environments:
+  dev:
+    values:
+      - environments/dev/values.yaml
+  staging:
+    values:
+      - environments/staging/values.yaml
+  prod:
+    values:
+      - environments/prod/values.yaml
+
+releases:
+  # Infrastructure Services
+  - name: redis
+    namespace: pss-nano
+    chart: bitnami/redis
+    version: ~18.0.0
+    values:
+      - infrastructure/redis/values.yaml
+      - infrastructure/redis/values-{{ .Environment.Name }}.yaml
+
+  - name: rabbitmq
+    namespace: pss-nano
+    chart: bitnami/rabbitmq
+    version: ~12.0.0
+    values:
+      - infrastructure/rabbitmq/values.yaml
+      - infrastructure/rabbitmq/values-{{ .Environment.Name }}.yaml
+
+  # Observability Stack
+  - name: prometheus
+    namespace: monitoring
+    chart: prometheus-community/kube-prometheus-stack
+    version: ~55.0.0
+    values:
+      - infrastructure/monitoring/prometheus/values.yaml
+    condition: monitoring.prometheus.enabled
+
+  - name: loki
+    namespace: monitoring
+    chart: grafana/loki-stack
+    version: ~2.9.0
+    values:
+      - infrastructure/monitoring/loki/values.yaml
+    condition: monitoring.loki.enabled
+
+  # Cert Manager
+  - name: cert-manager
+    namespace: cert-manager
+    chart: jetstack/cert-manager
+    version: ~1.13.0
+    values:
+      - infrastructure/cert-manager/values.yaml
+
+  # Ingress Controller
+  - name: ingress-nginx
+    namespace: ingress-nginx
+    chart: ingress-nginx/ingress-nginx
+    version: ~4.8.0
+    values:
+      - infrastructure/ingress-nginx/values.yaml
+      - infrastructure/ingress-nginx/values-{{ .Environment.Name }}.yaml
+
+  # Istio
+  - name: istio-base
+    namespace: istio-system
+    chart: istio/base
+    version: ~1.20.0
+    condition: serviceMesh.enabled
+
+  - name: istiod
+    namespace: istio-system
+    chart: istio/istiod
+    version: ~1.20.0
+    needs:
+      - istio-system/istio-base
+    condition: serviceMesh.enabled
+
+  # ArgoCD
+  - name: argocd
+    namespace: argocd
+    chart: argo/argo-cd
+    version: ~5.51.0
+    values:
+      - infrastructure/argocd/values.yaml
+    condition: gitops.enabled
+
+  # API Gateway
+  - name: api-gateway
+    namespace: pss-nano
+    chart: ./api-gateway
+    values:
+      - api-gateway/values.yaml
+      - api-gateway/values-{{ .Environment.Name }}.yaml
+
+  # Microservices
+  - name: reservation-service
+    namespace: pss-nano
+    chart: ./services/reservation-service
+    values:
+      - services/reservation-service/values.yaml
+
+  - name: inventory-service
+    namespace: pss-nano
+    chart: ./services/inventory-service
+    values:
+      - services/inventory-service/values.yaml
+
+  - name: auth-service
+    namespace: pss-nano
+    chart: ./services/auth-service
+    values:
+      - services/auth-service/values.yaml
+
+  - name: payment-service
+    namespace: pss-nano
+    chart: ./services/payment-service
+    values:
+      - services/payment-service/values.yaml
+
+  - name: pricing-service
+    namespace: pss-nano
+    chart: ./services/pricing-service
+    values:
+      - services/pricing-service/values.yaml
+
+  - name: ancillary-service
+    namespace: pss-nano
+    chart: ./services/ancillary-service
+    values:
+      - services/ancillary-service/values.yaml
+
+  - name: boarding-service
+    namespace: pss-nano
+    chart: ./services/boarding-service
+    values:
+      - services/boarding-service/values.yaml
+
+  - name: dcs-service
+    namespace: pss-nano
+    chart: ./services/dcs-service
+    values:
+      - services/dcs-service/values.yaml
+
+  - name: load-control-service
+    namespace: pss-nano
+    chart: ./services/load-control-service
+    values:
+      - services/load-control-service/values.yaml
+
+  - name: marketing-service
+    namespace: pss-nano
+    chart: ./services/marketing-service
+    values:
+      - services/marketing-service/values.yaml
+
+  - name: analytics-service
+    namespace: pss-nano
+    chart: ./services/analytics-service
+    values:
+      - services/analytics-service/values.yaml
+
+  - name: cms-service
+    namespace: pss-nano
+    chart: ./services/cms-service
+    values:
+      - services/cms-service/values.yaml
+
+  - name: gds-integration-service
+    namespace: pss-nano
+    chart: ./services/gds-integration-service
+    values:
+      - services/gds-integration-service/values.yaml
+
+  - name: regulatory-compliance-service
+    namespace: pss-nano
+    chart: ./services/regulatory-compliance-service
+    values:
+      - services/regulatory-compliance-service/values.yaml
+
+  - name: airport-integration-service
+    namespace: pss-nano
+    chart: ./services/airport-integration-service
+    values:
+      - services/airport-integration-service/values.yaml
+
+  - name: notification-service
+    namespace: pss-nano
+    chart: ./services/notification-service
+    values:
+      - services/notification-service/values.yaml

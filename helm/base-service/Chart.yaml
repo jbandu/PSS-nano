@@ -1,0 +1,12 @@
+apiVersion: v2
+name: base-service
+description: Base Helm chart for PSS-nano microservices
+type: library
+version: 1.0.0
+appVersion: "1.0.0"
+keywords:
+  - microservice
+  - pss
+  - airline
+maintainers:
+  - name: PSS-nano Team
