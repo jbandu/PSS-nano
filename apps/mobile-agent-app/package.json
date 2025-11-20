@@ -47,7 +47,7 @@
     "react-redux": "^9.0.4",
     "@redux-offline/redux-offline": "^2.6.0-native.0",
     "redux-persist": "^6.0.0",
-    "vision-camera-ocr": "^2.0.0",
+    "vision-camera-ocr": "^1.0.0",
     "zustand": "^4.5.0"
   },
   "devDependencies": {
