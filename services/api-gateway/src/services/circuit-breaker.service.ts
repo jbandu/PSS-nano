@@ -111,7 +111,7 @@ class CircuitBreakerManager {
     }
 
     try {
-      return await breaker.fire(config);
+      return await breaker.fire(config) as AxiosResponse;
     } catch (error: any) {
       if (error.message === 'Breaker is open') {
         throw new CircuitBreakerOpenError(service.name);

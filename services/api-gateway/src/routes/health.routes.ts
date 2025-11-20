@@ -63,7 +63,7 @@ router.get('/ready', (req: Request, res: Response) => {
     });
   }
 
-  res.status(StatusCodes.OK).json({
+  return res.status(StatusCodes.OK).json({
     status: 'ready',
     message: 'API Gateway is ready to accept traffic',
   });
